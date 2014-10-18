@@ -7,8 +7,9 @@ Disclaimer
 ----------
 While the code was developed according to official
 [Developers Guide](https://developers.google.com/safe-browsing/developers_guide_v3)
-this is **not** a reference implementation. You are also encouraged to check
-[API Acceptable Use Policy](https://developers.google.com/safe-browsing/developers_guide_v3#AcceptableUsage)
+this is **not** a reference implementation. You also may want to check
+[Acceptable Use Policy](https://developers.google.com/safe-browsing/developers_guide_v3#AcceptableUsage)
+for Safe Browsing API
 
 Quick start
 -----------
@@ -30,6 +31,8 @@ Instructions can be found [here](https://developers.google.com/safe-browsing/loo
     sbl.update_hash_prefix_cache()
 ```
 
+*On a first run it may take up to several hours to complete the sync*
+
 ###### URL lookup
 
 ```python
@@ -37,3 +40,8 @@ Instructions can be found [here](https://developers.google.com/safe-browsing/loo
     sbl = SafeBrowsingList('API KEY GOES HERE')
     sbl.lookup_url('http://github.com/')
 ```
+
+CLI Tool
+--------
+Please see gglsbl_client.py which can be used to sync lists data in the background
+and perform single URL lookups
