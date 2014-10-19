@@ -1,7 +1,7 @@
 gglsbl
 ======
 
-Client library for Google Safe Browsing API
+Python client library for Google Safe Browsing API
 
 Disclaimer
 ----------
