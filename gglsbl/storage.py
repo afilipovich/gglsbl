@@ -119,7 +119,7 @@ class SqliteStorage(StorageBase):
 
     def store_chunk(self, chunk):
         "Store chunk in the database"
-        log.debug('Storing chunk #%s', chunk.chunk_number)
+        log.debug('Storing %s chunk #%s for list name %s' % (chunk.chunk_type, chunk.chunk_number, chunk.list_name))
         self.insert_chunk(chunk)
         for hash_value in chunk.hashes:
             hash_prefix = {

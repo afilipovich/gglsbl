@@ -199,7 +199,7 @@ class PrefixListProtocolClient(BaseProtocolClient):
             if 'sub' in list_data:
                 list_data_cmp.append('s:%s' % list_data['sub'])
             payload.append('%s;%s' % (l, ':'.join(list_data_cmp)))
-        payload = '\n'.join(payload)
+        payload = '\n'.join(payload) + '\n'
         response = self.apiCall(url, payload)
         return response
 
