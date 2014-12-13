@@ -5,7 +5,7 @@ import struct
 import time
 from StringIO import StringIO
 import random
-import os
+import posixpath
 import re
 import hashlib
 import socket
@@ -334,7 +334,7 @@ class URL(object):
         if not path:
             path = '/'
         has_trailing_slash = (path[-1] == '/')
-        path = os.path.normpath(path).replace('//', '/')
+        path = posixpath.normpath(path).replace('//', '/')
         if has_trailing_slash and path[-1] != '/':
             path = path + '/'
         user = url_parts.username
