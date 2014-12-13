@@ -43,5 +43,19 @@ Instructions can be found [here](https://developers.google.com/safe-browsing/loo
 
 CLI Tool
 --------
-Please see gglsbl_client.py which can be used to sync lists data in the background
-and perform single URL lookups
+*bin/gglsbl_client.py* can be used for quick testing and as a code example.
+
+To sync local cache with Safe Browsing API omitting [Acceptable Use Policy](https://developers.google.com/safe-browsing/developers_guide_v3#AcceptableUsage) delays
+```
+    gglsbl_client.py --api-key 'API KEY GOES HERE' --onetime
+```
+
+To look up URL
+```
+    gglsbl_client.py --api-key 'API KEY GOES HERE' --check-url http://github.com/
+```
+
+Fore more options please see
+```
+    gglsbl_client.py --help
+```

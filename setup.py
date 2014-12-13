@@ -1,10 +1,10 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2.7
 
 from setuptools import setup
 
 import sys, os
 
-__version__ = '0.2'
+__version__ = '0.3'
 
 setup(name='gglsbl',
     version=__version__,
