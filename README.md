@@ -15,7 +15,8 @@ Quick start
 -----------
 
 ###### Get Google API key
-Instructions can be found [here](https://developers.google.com/safe-browsing/lookup_guide#GettingStarted)
+Instructions can be found [here](https://developers.google.com/safe-browsing/lookup_guide#GettingStarted).
+Please note that v3.0 API key is different from v2.2 API.
 
 ###### Install the library
 
