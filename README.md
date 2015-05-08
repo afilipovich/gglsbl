@@ -60,3 +60,7 @@ Fore more options please see
 ```
     gglsbl_client.py --help
 ```
+
+Running on Python3
+------------
+There is a [python3 port](https://github.com/Stefan-Code/gglsbl3) of this library maintained by [Stefan](https://github.com/Stefan-Code).
