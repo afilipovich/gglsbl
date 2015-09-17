@@ -342,9 +342,15 @@ class URL(object):
         host = host.strip('.')
         host = re.sub(r'\.+', '.', host).lower()
         if host.isdigit():
-            host = socket.gethostbyname(host)
+            try:
+                host = socket.gethostbyname(host)
+            except socket.gaierror as e:
+                pass
         if host.startswith('0x') and '.' not in host:
-            host = socket.gethostbyname(host)
+            try:
+                host = socket.gethostbyname(host)
+            except socket.gaierror as e:
+                pass
         if path == '':
             path = '/'
         quoted_path = quote(path)

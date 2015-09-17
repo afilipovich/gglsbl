@@ -4,7 +4,7 @@ from setuptools import setup
 
 import sys, os
 
-__version__ = '0.3'
+__version__ = '0.4'
 
 setup(name='gglsbl',
     version=__version__,
