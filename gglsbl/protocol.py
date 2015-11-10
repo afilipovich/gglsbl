@@ -22,7 +22,8 @@ class BaseProtocolClient(object):
             "base_url": "https://safebrowsing.google.com/safebrowsing/",
             "lists": [
                 "goog-malware-shavar",
-                "googpub-phish-shavar"
+                "googpub-phish-shavar",
+                "goog-unwanted-shavar"
             ],
             "url_args": {
                 "key": api_key,
