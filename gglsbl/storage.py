@@ -71,6 +71,7 @@ class SqliteStorage(StorageBase):
         if do_init_db:
             log.info('SQLite DB does not exist, initializing')
             self.init_db()
+        self.dbc.execute('PRAGMA synchronous = 0')
 
     def init_db(self):
         self.dbc.execute(
