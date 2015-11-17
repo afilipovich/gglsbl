@@ -17,6 +17,7 @@ class SafeBrowsingListTestCase(unittest.TestCase):
             "http://195.127.0.11/uploads/%20%20%20%20/.verify/.eBaysecure=updateuserdataxplimnbqmn-xplmvalidateinfoswqpcmlx=hgplmcx/": "http://195.127.0.11/uploads/%20%20%20%20/.verify/.eBaysecure=updateuserdataxplimnbqmn-xplmvalidateinfoswqpcmlx=hgplmcx/",
             "http://host%23.com/%257Ea%2521b%2540c%2523d%2524e%25f%255E00%252611%252A22%252833%252944_55%252B": "http://host%23.com/~a!b@c%23d$e%25f^00&11*22(33)44_55+",
             "http://3279880203/blah": "http://195.127.0.11/blah",
+            "http://0xc37f000b/blah": "http://195.127.0.11/blah",
             "http://www.google.com/blah/..": "http://www.google.com/",
             "www.google.com/": "http://www.google.com/",
             "www.google.com": "http://www.google.com/",

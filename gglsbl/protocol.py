@@ -344,13 +344,13 @@ class URL(object):
         host = re.sub(r'\.+', '.', host).lower()
         if host.isdigit():
             try:
-                host = socket.gethostbyname(host)
-            except socket.gaierror as e:
+                host = socket.inet_ntoa(struct.pack("!I", int(host)))
+            except:
                 pass
         if host.startswith('0x') and '.' not in host:
             try:
-                host = socket.gethostbyname(host)
-            except socket.gaierror as e:
+                host = socket.inet_ntoa(struct.pack("!I", int(host, 16)))
+            except:
                 pass
         if path == '':
             path = '/'
