@@ -352,8 +352,6 @@ class URL(object):
                 host = socket.inet_ntoa(struct.pack("!I", int(host, 16)))
             except:
                 pass
-        if path == '':
-            path = '/'
         quoted_path = quote(path)
         quoted_host = quote(host)
         if port is not None:

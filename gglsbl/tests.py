@@ -23,6 +23,7 @@ class SafeBrowsingListTestCase(unittest.TestCase):
             "www.google.com": "http://www.google.com/",
             "http://www.evil.com/blah#frag": "http://www.evil.com/blah",
             "http://www.GOOgle.com/": "http://www.google.com/",
+            "google.com": "http://google.com/",
             "http://www.google.com.../": "http://www.google.com/",
             "http://www.google.com/foo\tbar\rbaz\n2":"http://www.google.com/foobarbaz2",
             "http://www.google.com/q?": "http://www.google.com/q?",
