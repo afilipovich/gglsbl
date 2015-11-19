@@ -144,7 +144,10 @@ class SqliteStorage(StorageBase):
             VALUES (?, ?, ?, ?)'
         params = [hash_prefix[k] for k in
                         ('value', 'chunk_number', 'list_name', 'chunk_type')]
-        self.dbc.execute(q, params)
+        try:
+            self.dbc.execute(q, params)
+        except sqlite3.IntegrityError as e:
+            log.warn('Failed to insert chunk because of %s' % e)
 
     def store_full_hashes(self, hash_prefix, hashes):
         "Store hashes found for the given hash prefix"
