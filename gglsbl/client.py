@@ -5,7 +5,6 @@ log = logging.getLogger()
 log.addHandler(logging.NullHandler())
 
 from .protocol import PrefixListProtocolClient, FullHashProtocolClient, URL
-from .storage import SqliteStorage
 
 
 class SafeBrowsingList(object):
@@ -14,11 +13,21 @@ class SafeBrowsingList(object):
     supporting partial update of the local cache.
     https://developers.google.com/safe-browsing/developers_guide_v3
     """
-    def __init__(self, api_key, db_path='/tmp/gsb_v3.db', discard_fair_use_policy=False):
+    STORAGE_BACKEND_SQLITE = "sqlite"
+    STORAGE_BACKEND_MYSQL = "mysql"
+
+    def __init__(self, api_key, db_path='/tmp/gsb_v3.db', discard_fair_use_policy=False, storage_backend = None, storage_config = None):
         self.prefixListProtocolClient = PrefixListProtocolClient(api_key,
                                 discard_fair_use_policy=discard_fair_use_policy)
         self.fullHashProtocolClient = FullHashProtocolClient(api_key)
-        self.storage = SqliteStorage(db_path)
+        if storage_backend is None or storage_backend == SafeBrowsingList.STORAGE_BACKEND_SQLITE:
+            from .storageSqlite import SqliteStorage
+            self.storage = SqliteStorage(db_path)
+        elif storage_backend == SafeBrowsingList.STORAGE_BACKEND_MYSQL:
+            from .storageMySQL import MySQLStorage
+            self.storage = MySQLStorage(storage_config)
+        else:
+            raise Exception("Unknown storage backend: %s" % (storage_backend, ))
 
     def update_hash_prefix_cache(self):
         "Sync locally stored hash prefixes with remote server"
