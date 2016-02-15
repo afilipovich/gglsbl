@@ -1,12 +1,24 @@
 #!/usr/bin/env python
 
 import os
-import sqlite3
+import datetime
+
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy import Table, Column, ForeignKeyConstraint, Integer, String, Boolean, Binary, DateTime
+from sqlalchemy import create_engine, func
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.sql import select
 
 import logging
 log = logging.getLogger()
 log.addHandler(logging.NullHandler())
 
+
+SqlAlchemyBase = declarative_base()
+
+
+def now():
+    return datetime.datetime.utcnow()
 
 class StorageBase(object):
     @staticmethod
@@ -61,189 +73,210 @@ class StorageBase(object):
         return nums
 
 
-class SqliteStorage(StorageBase):
-    """Storage abstraction for local GSB cache"""
-    def __init__(self, db_path):
-        do_init_db = not os.path.isfile(db_path)
-        log.info('Opening SQLite DB %s' % db_path)
-        self.db = sqlite3.connect(db_path)
-        self.dbc = self.db.cursor()
-        if do_init_db:
-            log.info('SQLite DB does not exist, initializing')
-            self.init_db()
-        self.dbc.execute('PRAGMA synchronous = 0')
+class Chunk(SqlAlchemyBase):
+    __tablename__ = "chunk"
+    chunk_number = Column(Integer, primary_key=True)
+    timestamp = Column(DateTime, default=now)
+    list_name = Column(String(127), nullable=False, primary_key=True)
+    chunk_type_sub = Column(Boolean, nullable=False, primary_key=True) # True for 'add', False for 'sub'
 
-    def init_db(self):
-        self.dbc.execute(
-        """CREATE TABLE chunk (
-            chunk_number integer NOT NULL,
-            timestamp timestamp DEFAULT current_timestamp,
-            list_name character varying(127) NOT NULL,
-            chunk_type TEXT CHECK( chunk_type IN ('add','sub')) NOT NULL,
-            PRIMARY KEY (chunk_number, list_name, chunk_type)
-            )"""
-        )
-        self.dbc.execute(
-        """CREATE TABLE full_hash (
-            value BLOB NOT NULL,
-            list_name character varying(127) NOT NULL,
-            downloaded_at timestamp DEFAULT current_timestamp,
-            expires_at timestamp without time zone NOT NULL,
-            PRIMARY KEY (value)
-            )"""
-        )
 
-        self.dbc.execute(
-        """CREATE TABLE hash_prefix (
-            value BLOB NOT NULL,
-            chunk_number integer NOT NULL,
-            timestamp timestamp without time zone DEFAULT current_timestamp,
-            list_name character varying(127) NOT NULL,
-            chunk_type TEXT CHECK( chunk_type IN ('add','sub')) NOT NULL,
-            full_hash_expires_at timestamp NOT NULL DEFAULT current_timestamp,
-            PRIMARY KEY (value, chunk_number, list_name, chunk_type),
-            FOREIGN KEY(chunk_number, list_name, chunk_type)
-                REFERENCES chunk(chunk_number, list_name, chunk_type)
-                ON DELETE CASCADE
-            )"""
-        )
-        self.db.commit()
+class FullHash(SqlAlchemyBase):
+    __tablename__ = "full_hash"
+    value = Column(Binary, nullable=False, primary_key=True)
+    list_name = Column(String(127))
+    downloaded_at = Column(DateTime, default=now)
+    expires_at = Column(DateTime, nullable=False)
+
+
+class HashPrefix(SqlAlchemyBase):
+    __tablename__ = "hash_prefix"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ['chunk_number','list_name', 'chunk_type_sub'],
+            ['chunk.chunk_number','chunk.list_name', 'chunk.chunk_type_sub'],
+            ondelete='CASCADE'),
+    )
+    value = Column(Binary, nullable=False, primary_key=True)
+    chunk_number = Column(Integer, nullable=False, primary_key=True)
+    timestamp = Column(DateTime, nullable=False, default=now)
+    list_name = Column(String(127), nullable=False, primary_key=True)
+    chunk_type_sub = Column(Boolean, nullable=False, primary_key=True)
+    full_hash_expires_at = Column(DateTime, nullable=False, default=now)
+
+
+class SqlAlchemyStorage(StorageBase):
+    """Storage abstraction for local GSB cache using SQLAlchemy"""
+
+    def __init__(self, conn_string):
+        if ':' not in conn_string:
+            initial_conn_string = conn_string
+            conn_string = 'sqlite:///' + conn_string
+            log.warn('Connection string "{}" is incompatible with SQLAlchemy. Assuming "{}" was meant.'.format(initial_conn_string, conn_string))
+        self.engine = create_engine(conn_string, echo=False)
+        SqlAlchemyBase.metadata.create_all(self.engine)
+        if self.engine.name == 'sqlite':
+            self.engine.execute('PRAGMA synchronous = 0') # this significantly reduces disk IO on SQLite DB
 
     def chunk_exists(self, chunk):
         "Check if given chunk records already exist in the database"
-        q = 'SELECT COUNT(*) FROM chunk WHERE chunk_number=? AND \
-            chunk_type=? AND list_name=?'
-        self.dbc.execute(q, [chunk.chunk_number, chunk.chunk_type, chunk.list_name])
-        if self.dbc.fetchall()[0][0] > 0:
-            return True
-        return False
+        chunk_type_sub = (chunk.chunk_type == 'sub')
+        q = select([func.count()]).where(
+                (Chunk.chunk_number == chunk.chunk_number)
+                & (Chunk.chunk_type_sub == chunk_type_sub)
+                & (Chunk.list_name == chunk.list_name)
+            )
+        res = self.engine.execute(q)
+        count = res.fetchone()[0]
+        res.close()
+        return count > 0
+
+    @staticmethod
+    def insert_chunk(connection, chunk):
+        "Insert hash prefixes from the chunk to the database"
+        q = Chunk.__table__.insert()
+        data = {
+            'chunk_number': chunk.chunk_number,
+            'list_name': chunk.list_name,
+            'chunk_type_sub': (chunk.chunk_type == 'sub')
+        }
+        connection.execute(q, data)
 
     def store_chunk(self, chunk):
         "Store chunk in the database"
         log.debug('Storing %s chunk #%s for list name %s' % (chunk.chunk_type, chunk.chunk_number, chunk.list_name))
-        self.insert_chunk(chunk)
-        for hash_value in chunk.hashes:
-            hash_prefix = {
-                'list_name': chunk.list_name,
-                'chunk_number': chunk.chunk_number,
-                'chunk_type': chunk.chunk_type,
-                'value': sqlite3.Binary(hash_value),
-            }
-            self.insert_hash_prefix(hash_prefix)
-        self.db.commit()
+        with self.engine.begin() as connection:
+            self.insert_chunk(connection, chunk)
+            q = HashPrefix.__table__.insert()
+            data = [
+                {
+                    'list_name': chunk.list_name,
+                    'chunk_number': chunk.chunk_number,
+                    'chunk_type_sub': (chunk.chunk_type == 'sub'),
+                    'value': hash_value,
+                }
+                for hash_value in chunk.hashes
+            ]
+            if not data:
+                return
+            try:
+                connection.execute(q, data)
+            except IntegrityError as e:
+                log.warn('Failed to insert chunk because of %s' % e)
 
-    def insert_chunk(self, chunk):
-        "Insert hash prefixes from the chunk to the database"
-        q = 'INSERT INTO chunk (chunk_number, list_name, chunk_type) \
-            VALUES (?, ?, ?)'
-        self.dbc.execute(q, [chunk.chunk_number, chunk.list_name, chunk.chunk_type])
-
-    def insert_hash_prefix(self, hash_prefix):
-        "Insert individual hash prefix to the database"
-        q = 'INSERT INTO hash_prefix (value, chunk_number, list_name, chunk_type) \
-            VALUES (?, ?, ?, ?)'
-        params = [hash_prefix[k] for k in
-                        ('value', 'chunk_number', 'list_name', 'chunk_type')]
-        try:
-            self.dbc.execute(q, params)
-        except sqlite3.IntegrityError as e:
-            log.warn('Failed to insert chunk because of %s' % e)
+    def cleanup_expired_hashes(self):
+        "Delete all hashes that behind their expiration date"
+        with self.engine.begin() as connection:
+            q = FullHash.__table__.delete().where(FullHash.expires_at < now())
+            connection.execute(q)
 
     def store_full_hashes(self, hash_prefix, hashes):
         "Store hashes found for the given hash prefix"
         self.cleanup_expired_hashes()
         cache_lifetime = hashes['cache_lifetime']
-        for list_name, hash_values in hashes['hashes'].items():
-            for hash_value in hash_values:
-                q = "INSERT INTO full_hash (value, list_name, downloaded_at, expires_at)\
-                    VALUES (?, ?, current_timestamp, datetime(current_timestamp, '+%d SECONDS'))"
-                self.dbc.execute(q % cache_lifetime, [sqlite3.Binary(hash_value), list_name])
-        q = "UPDATE hash_prefix SET full_hash_expires_at=datetime(current_timestamp, '+%d SECONDS') \
-            WHERE chunk_type='add' AND value=?"
-        self.dbc.execute(q % cache_lifetime, [sqlite3.Binary(hash_prefix)])
-        self.db.commit()
+        with self.engine.begin() as connection:
+            q = FullHash.__table__.insert()
+            for list_name, hash_values in hashes['hashes'].items():
+                for hash_value in hash_values:
+                    data = {
+                        'value': hash_value,
+                        'list_name': list_name,
+                        'downloaded_at': now(),
+                        'expires_at': now() + datetime.timedelta(seconds=cache_lifetime),
+                    }
+                    connection.execute(q, data)
+            q = HashPrefix.update().where((chunk_type_sub == False) & (value == hash_prefix))
+            data = {
+                'full_hash_expires_at': now() + datetime.timedelta(seconds=cache_lifetime)
+            }
+            connection.execute(q, data)
 
     def full_hash_sync_required(self, hash_prefix):
         """Check if hashes for the given hash prefix have expired
 
         and that prefix needs to be re-queried
         """
-        q = "SELECT COUNT(*) FROM hash_prefix WHERE \
-            full_hash_expires_at > current_timestamp AND chunk_type='add' AND value=?"
-        self.dbc.execute(q, [sqlite3.Binary(hash_prefix)])
-        c = self.dbc.fetchall()[0][0]
-        return c == 0
+        q = select([func.count()]).where(
+            (HashPrefix.full_hash_expires_at > now()) \
+            & (HashPrefix.chunk_type_sub == False) \
+            & (HashPrefix.value == hash_prefix)
+        )
+        res = self.engine.execute(q)
+        count = res.fetchone()[0]
+        res.close()
+        return count == 0
 
     def lookup_full_hash(self, hash_value):
         "Query DB to see if hash is blacklisted"
-        q = 'SELECT list_name FROM full_hash WHERE value=?'
-        self.dbc.execute(q, [sqlite3.Binary(hash_value)])
-        return [h[0] for h in self.dbc.fetchall()]
+        q = select([FullHash.list_name]).where(FullHash.value == hash_value)
+        res = self.engine.execute(q)
+        return [h[0] for h in res.fetchall()]
 
     def lookup_hash_prefix(self, hash_prefix):
         """Check if hash prefix is in the list and does not have 'sub'
         status signifying that it should be evicted from the blacklist
         """
-        q = 'SELECT list_name FROM hash_prefix WHERE chunk_type=? AND value=?'
-        self.dbc.execute(q, ['add', sqlite3.Binary(hash_prefix)])
-        lists_add = [r[0] for r in self.dbc.fetchall()]
+        q_add = select([HashPrefix.list_name]).where((HashPrefix.chunk_type_sub == False) & (HashPrefix.value == hash_prefix))
+        q_sub = select([HashPrefix.list_name]).where((HashPrefix.chunk_type_sub == True) & (HashPrefix.value == hash_prefix))
+
+        res = self.engine.execute(q_add)
+        lists_add = [r[0] for r in res.fetchall()]
         if len(lists_add) == 0:
             return False
-        self.dbc.execute(q, ['sub', sqlite3.Binary(hash_prefix)])
-        lists_sub = [r[0] for r in self.dbc.fetchall()]
+        res = self.engine.execute(q_sub)
+        lists_sub = [r[0] for r in res.fetchall()]
         if len(lists_sub) == 0:
             return True
         if set(lists_add) - set(lists_sub):
             return True
         return False
 
-    def cleanup_expired_hashes(self):
-        "Delete all hashes that behind their expiration date"
-        q = 'DELETE FROM full_hash WHERE expires_at < current_timestamp'
-        self.dbc.execute(q)
-        self.db.commit()
-
     def del_add_chunks(self, chunk_numbers):
         "Delete records associated with 'add' chunk"
         if not chunk_numbers:
             return
         log.info('Deleting "add" chunks %s' % repr(chunk_numbers))
-        for cn in self.expand_ranges(chunk_numbers):
-            q = 'DELETE FROM chunk WHERE chunk_type=? AND chunk_number=?'
-            self.dbc.execute(q, ['add', cn])
-        self.db.commit()
+        with self.engine.begin() as connection:
+            for cn in self.expand_ranges(chunk_numbers):
+                q = Chunk.__table__.delete().where((Chunk.chunk_type_sub == False) & (Chunk.chunk_number == cn))
+                connection.execute(q)
 
     def del_sub_chunks(self, chunk_numbers):
         "Delete records associated with 'sub' chunk"
         if not chunk_numbers:
             return
         log.info('Deleting "sub" chunks %s' % repr(chunk_numbers))
-        for cn in self.expand_ranges(chunk_numbers):
-            q = 'DELETE FROM chunk WHERE chunk_type=? AND chunk_number=?'
-            self.dbc.execute(q, ['sub', cn])
-        self.db.commit()
+        with self.engine.begin() as connection:
+            for cn in self.expand_ranges(chunk_numbers):
+                q = Chunk.__table__.delete().where((Chunk.chunk_type_sub == True) & (Chunk.chunk_number == cn))
+                connection.execute(q)
+
+    def get_list_names(self):
+        "Get names for known lists in the cache."
+        q = select([Chunk.list_name]).group_by(Chunk.list_name)
+        res = self.engine.execute(q)
+        return [l[0] for l in res.fetchall()]
 
     def get_existing_chunks(self):
         "Get the list of chunks that are available in the local cache"
         output = {}
-        for chunk_type in ('add', 'sub'):
-            q = "SELECT list_name, group_concat(chunk_number) FROM chunk \
-                WHERE chunk_type=? GROUP BY list_name"
-            self.dbc.execute(q, [chunk_type])
-            for list_name, chunks in self.dbc.fetchall():
-                if not output.has_key(list_name):
-                    output[list_name] = {}
-                chunks = [int(c) for c in chunks.split(',')]
-                output[list_name][chunk_type] = self.compress_ranges(chunks)
+        for chunk_type_sub in (False, True):
+            for list_name in self.get_list_names():
+                q = select([Chunk.chunk_number]).where((Chunk.chunk_type_sub == chunk_type_sub) & (Chunk.list_name == list_name))
+                res = self.engine.execute(q)
+                chunks = [int(c[0]) for c in res.fetchall()]
+                if chunks:
+                    if not output.has_key(list_name):
+                        output[list_name] = {}
+                    output[list_name][(chunk_type_sub and 'sub' or 'add')] = self.compress_ranges(chunks)
         return output
 
     def total_cleanup(self):
         "Reset local cache"
-        q = 'DROP TABLE hash_prefix'
-        self.dbc.execute(q)
-        q = 'DROP TABLE chunk'
-        self.dbc.execute(q)
-        q = 'DROP TABLE full_prefix'
-        self.dbc.execute(q)
-        self.db.commit()
-        self.init_db()
+        with self.engine.begin() as connection:
+            q = FullPrefix.__table__.delete()
+            connection.execute(q)
+            q = HashPrefix.__table__.delete()
+            connection.execute(q)
+            q = Chunk.__table__.delete()
+            connection.execute(q)

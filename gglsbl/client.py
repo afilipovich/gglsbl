@@ -5,7 +5,7 @@ log = logging.getLogger()
 log.addHandler(logging.NullHandler())
 
 from .protocol import PrefixListProtocolClient, FullHashProtocolClient, URL
-from .storage import SqliteStorage
+from .storage import SqlAlchemyStorage
 
 
 class SafeBrowsingList(object):
@@ -14,11 +14,11 @@ class SafeBrowsingList(object):
     supporting partial update of the local cache.
     https://developers.google.com/safe-browsing/developers_guide_v3
     """
-    def __init__(self, api_key, db_path='/tmp/gsb_v3.db', discard_fair_use_policy=False):
+    def __init__(self, api_key, db_path='sqlite:////tmp/gsb_v3.db', discard_fair_use_policy=False):
         self.prefixListProtocolClient = PrefixListProtocolClient(api_key,
                                 discard_fair_use_policy=discard_fair_use_policy)
         self.fullHashProtocolClient = FullHashProtocolClient(api_key)
-        self.storage = SqliteStorage(db_path)
+        self.storage = SqlAlchemyStorage(db_path)
 
     def update_hash_prefix_cache(self):
         "Sync locally stored hash prefixes with remote server"
@@ -26,18 +26,15 @@ class SafeBrowsingList(object):
         response = self.prefixListProtocolClient.retrieveMissingChunks(existing_chunks=existing_chunks)
         if response.reset_required:
             self.storage.total_cleanup()
-        try:
-            self.storage.del_add_chunks(response.del_add_chunks)
-            self.storage.del_sub_chunks(response.del_sub_chunks)
-            for chunk in response.chunks:
-                if self.storage.chunk_exists(chunk):
-                    log.debug('chunk #%d of type %s exists in stored list %s, skipping',
-                        chunk.chunk_number, chunk.chunk_type, chunk.list_name)
-                    continue
-                self.storage.store_chunk(chunk)
-        except:
-            self.storage.db.rollback()
-            raise
+
+        self.storage.del_add_chunks(response.del_add_chunks)
+        self.storage.del_sub_chunks(response.del_sub_chunks)
+        for chunk in response.chunks:
+            if self.storage.chunk_exists(chunk):
+                log.debug('chunk #%d of type %s exists in stored list %s, skipping',
+                    chunk.chunk_number, chunk.chunk_type, chunk.list_name)
+                continue
+            self.storage.store_chunk(chunk)
 
     def sync_full_hashes(self, hash_prefix):
         "Sync full hashes starting with hash_prefix from remote server"
@@ -64,11 +61,6 @@ class SafeBrowsingList(object):
         Returns names of lists it was found in.
         """
         hash_prefix = full_hash[0:4]
-        try:
-            if self.storage.lookup_hash_prefix(hash_prefix):
-                self.sync_full_hashes(hash_prefix)
-                return self.storage.lookup_full_hash(full_hash)
-        except:
-            self.storage.db.rollback()
-            raise
-
+        if self.storage.lookup_hash_prefix(hash_prefix):
+            self.sync_full_hashes(hash_prefix)
+            return self.storage.lookup_full_hash(full_hash)
