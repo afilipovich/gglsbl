@@ -176,7 +176,8 @@ class SqlAlchemyStorage(StorageBase):
     def store_full_hashes(self, hash_prefix, hashes):
         "Store hashes found for the given hash prefix"
         self.cleanup_expired_hashes()
-        cache_lifetime = hashes['cache_lifetime']
+        current_timestamp = now()
+        expires_at = current_timestamp + datetime.timedelta(seconds=hashes['cache_lifetime'])
         with self.engine.begin() as connection:
             q = FullHash.__table__.insert()
             for list_name, hash_values in hashes['hashes'].items():
@@ -184,13 +185,13 @@ class SqlAlchemyStorage(StorageBase):
                     data = {
                         'value': hash_value,
                         'list_name': list_name,
-                        'downloaded_at': now(),
-                        'expires_at': current_timestamp + datetime.timedelta(seconds=cache_lifetime),
+                        'downloaded_at': current_timestamp,
+                        'expires_at': expires_at,
                     }
                     connection.execute(q, data)
             q = HashPrefix.update().where((chunk_type_sub == False) & (value == hash_prefix))
             data = {
-                'full_hash_expires_at': now() + datetime.timedelta(seconds=cache_lifetime)
+                'full_hash_expires_at': expires_at
             }
             connection.execute(q, data)
 
