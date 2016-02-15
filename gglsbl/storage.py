@@ -75,10 +75,10 @@ class StorageBase(object):
 
 class Chunk(SqlAlchemyBase):
     __tablename__ = "chunk"
-    chunk_number = Column(Integer, primary_key=True)
+    chunk_number = Column(Integer, primary_key=True, index=True)
     timestamp = Column(DateTime, default=now)
-    list_name = Column(String(127), nullable=False, primary_key=True)
-    chunk_type_sub = Column(Boolean, nullable=False, primary_key=True) # True for 'add', False for 'sub'
+    list_name = Column(String(127), nullable=False, primary_key=True, index=True)
+    chunk_type_sub = Column(Boolean, nullable=False, primary_key=True, index=True) # True for 'add', False for 'sub'
 
 
 class FullHash(SqlAlchemyBase):
@@ -86,7 +86,7 @@ class FullHash(SqlAlchemyBase):
     value = Column(Binary, nullable=False, primary_key=True)
     list_name = Column(String(127))
     downloaded_at = Column(DateTime, default=now)
-    expires_at = Column(DateTime, nullable=False)
+    expires_at = Column(DateTime, nullable=False, index=True)
 
 
 class HashPrefix(SqlAlchemyBase):
@@ -97,10 +97,10 @@ class HashPrefix(SqlAlchemyBase):
             ['chunk.chunk_number','chunk.list_name', 'chunk.chunk_type_sub'],
             ondelete='CASCADE'),
     )
-    value = Column(Binary, nullable=False, primary_key=True)
-    chunk_number = Column(Integer, nullable=False, primary_key=True)
+    value = Column(Binary, nullable=False, primary_key=True, index=True)
+    chunk_number = Column(Integer, nullable=False, primary_key=True, index=True)
     timestamp = Column(DateTime, nullable=False, default=now)
-    list_name = Column(String(127), nullable=False, primary_key=True)
+    list_name = Column(String(127), nullable=False, primary_key=True, index=True)
     chunk_type_sub = Column(Boolean, nullable=False, primary_key=True)
     full_hash_expires_at = Column(DateTime, nullable=False, default=now)
 
@@ -148,12 +148,15 @@ class SqlAlchemyStorage(StorageBase):
         with self.engine.begin() as connection:
             self.insert_chunk(connection, chunk)
             q = HashPrefix.__table__.insert()
+            current_timestamp = now()
             data = [
                 {
                     'list_name': chunk.list_name,
                     'chunk_number': chunk.chunk_number,
                     'chunk_type_sub': (chunk.chunk_type == 'sub'),
                     'value': hash_value,
+                    'timestamp': current_timestamp,
+                    'full_hash_expires_at': current_timestamp,
                 }
                 for hash_value in chunk.hashes
             ]
@@ -182,7 +185,7 @@ class SqlAlchemyStorage(StorageBase):
                         'value': hash_value,
                         'list_name': list_name,
                         'downloaded_at': now(),
-                        'expires_at': now() + datetime.timedelta(seconds=cache_lifetime),
+                        'expires_at': current_timestamp + datetime.timedelta(seconds=cache_lifetime),
                     }
                     connection.execute(q, data)
             q = HashPrefix.update().where((chunk_type_sub == False) & (value == hash_prefix))
