@@ -221,12 +221,11 @@ class SqlAlchemyStorage(StorageBase):
         status signifying that it should be evicted from the blacklist
         """
         q_add = select([HashPrefix.list_name]).where((HashPrefix.chunk_type_sub == False) & (HashPrefix.value == hash_prefix))
-        q_sub = select([HashPrefix.list_name]).where((HashPrefix.chunk_type_sub == True) & (HashPrefix.value == hash_prefix))
-
         res = self.engine.execute(q_add)
         lists_add = [r[0] for r in res.fetchall()]
         if len(lists_add) == 0:
             return False
+        q_sub = select([HashPrefix.list_name]).where((HashPrefix.chunk_type_sub == True) & (HashPrefix.value == hash_prefix))
         res = self.engine.execute(q_sub)
         lists_sub = [r[0] for r in res.fetchall()]
         if len(lists_sub) == 0:
