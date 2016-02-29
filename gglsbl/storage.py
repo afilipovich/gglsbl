@@ -189,7 +189,7 @@ class SqlAlchemyStorage(StorageBase):
                         'expires_at': expires_at,
                     }
                     connection.execute(q, data)
-            q = HashPrefix.update().where((chunk_type_sub == False) & (value == hash_prefix))
+            q = HashPrefix.__table__.update().where((HashPrefix.chunk_type_sub == False) & (HashPrefix.value == hash_prefix))
             data = {
                 'full_hash_expires_at': expires_at
             }
