@@ -5,7 +5,7 @@ log = logging.getLogger()
 log.addHandler(logging.NullHandler())
 
 from .protocol import PrefixListProtocolClient, FullHashProtocolClient, URL
-from .storage import SqlAlchemyStorage
+from .storage import SqlAlchemyStorage, SqliteStorage
 
 
 class SafeBrowsingList(object):
@@ -13,12 +13,18 @@ class SafeBrowsingList(object):
 
     supporting partial update of the local cache.
     https://developers.google.com/safe-browsing/developers_guide_v3
+    sqlite://user:password@db_host:port/db_name
     """
-    def __init__(self, api_key, db_path='sqlite:////tmp/gsb_v3.db', discard_fair_use_policy=False):
+    def __init__(self, api_key, db_path='/tmp/gsb_v3.db', discard_fair_use_policy=False):
         self.prefixListProtocolClient = PrefixListProtocolClient(api_key,
                                 discard_fair_use_policy=discard_fair_use_policy)
         self.fullHashProtocolClient = FullHashProtocolClient(api_key)
-        self.storage = SqlAlchemyStorage(db_path)
+        if ':' in db_path:
+            log.info('Using SqlAlchemy storage backend')
+            self.storage = SqlAlchemyStorage(db_path)
+        else:
+            log.info('Using Sqlite storage backend')
+            self.storage = SqliteStorage(db_path)
 
     def update_hash_prefix_cache(self):
         "Sync locally stored hash prefixes with remote server"
