@@ -28,7 +28,7 @@ def setupArgsParser():
                 help='Safe Browsing API key [REQUIRED]')
     parser.add_argument('--db-path',
                 default='/tmp/gsb_v3.db',
-                help='Path to SQLite DB')
+                help='Path to SQLite DB or DB connection string for SQLAlchemy')
     parser.add_argument('--log',
                 default=None,
                 help='Path to log file, by default log to STDERR')

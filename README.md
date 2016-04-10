@@ -61,6 +61,14 @@ Fore more options please see
     gglsbl_client.py --help
 ```
 
+Alternative Storage Backend
+---------------------------
+To use databses other than SQLite, set db_path option to DB connection URL, e.g.
+```
+postgresql://aleh@localhost/gglsbl
+```
+This feature requires SqlAlchemy library and is significantly slower than using native SQLite.
+
 Running on Python3
 ------------
 There is a [python3 port](https://github.com/Stefan-Code/gglsbl3) of this library maintained by [Stefan](https://github.com/Stefan-Code).
