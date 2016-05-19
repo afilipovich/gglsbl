@@ -89,7 +89,7 @@ class SqliteStorage(StorageBase):
             list_name character varying(127) NOT NULL,
             downloaded_at timestamp DEFAULT current_timestamp,
             expires_at timestamp without time zone NOT NULL,
-            PRIMARY KEY (value)
+            PRIMARY KEY (value, list_name)
             )"""
         )
 
