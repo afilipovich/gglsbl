@@ -86,6 +86,7 @@ class StorageBase(object):
 class SqliteStorage(StorageBase):
     """Storage abstraction for local GSB cache"""
     def __init__(self, db_path):
+        self.db_path = db_path
         do_init_db = not os.path.isfile(db_path)
         log.info('Opening SQLite DB %s' % db_path)
         self.db = sqlite3.connect(db_path)
@@ -211,7 +212,11 @@ class SqliteStorage(StorageBase):
         status signifying that it should be evicted from the blacklist
         """
         q = 'SELECT list_name FROM hash_prefix WHERE chunk_type_sub=? AND value=?'
-        self.dbc.execute(q, [False, sqlite3.Binary(hash_prefix)])
+        try:
+            self.dbc.execute(q, [False, sqlite3.Binary(hash_prefix)])
+        except sqlite3.OperationalError:
+            raise RuntimeError(('Cache DB schema is incompatible with the library version. '
+                                'Please remove {} and re-sync.').format(self.db_path))
         lists_add = [r[0] for r in self.dbc.fetchall()]
         if len(lists_add) == 0:
             return False
@@ -244,10 +249,14 @@ class SqliteStorage(StorageBase):
     def get_existing_chunks(self):
         "Get the list of chunks that are available in the local cache"
         output = {}
-        for chunk_type, chunk_type_sub in [('add', 0), ('sub', 1)]:
+        for chunk_type, chunk_type_sub in [('add', False), ('sub', True)]:
             q = """SELECT list_name, group_concat(chunk_number) FROM chunk
                 WHERE chunk_type_sub=? GROUP BY list_name"""
-            self.dbc.execute(q, [chunk_type_sub])
+            try:
+                self.dbc.execute(q, [chunk_type_sub])
+            except sqlite3.OperationalError:
+                raise RuntimeError(('Cache DB schema is incompatible with the library version. '
+                                    'Please remove {} and re-sync.').format(self.db_path))
             for list_name, chunks in self.dbc.fetchall():
                 if not output.has_key(list_name):
                     output[list_name] = {}
