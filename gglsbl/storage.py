@@ -347,14 +347,13 @@ class SqliteStorage(StorageBase):
         "Store chunk in the database"
         log.debug('Storing %s chunk #%s for list name %s' % (chunk.chunk_type, chunk.chunk_number, chunk.list_name))
         self.insert_chunk(chunk)
+        list_name = chunk.list_name
+        chunk_number = chunk.chunk_number
+        chunk_type = chunk.chunk_type
+        hash_prefixes = []
         for hash_value in chunk.hashes:
-            hash_prefix = {
-                'list_name': chunk.list_name,
-                'chunk_number': chunk.chunk_number,
-                'chunk_type': chunk.chunk_type,
-                'value': sqlite3.Binary(hash_value),
-            }
-            self.insert_hash_prefix(hash_prefix)
+            hash_prefixes.append([sqlite3.Binary(hash_value), chunk_number, list_name, chunk_type])
+        self.insert_hash_prefixes(hash_prefixes)
         self.db.commit()
 
     def insert_chunk(self, chunk):
@@ -363,14 +362,12 @@ class SqliteStorage(StorageBase):
             VALUES (?, ?, ?)'
         self.dbc.execute(q, [chunk.chunk_number, chunk.list_name, chunk.chunk_type])
 
-    def insert_hash_prefix(self, hash_prefix):
+    def insert_hash_prefixes(self, hash_prefixes):
         "Insert individual hash prefix to the database"
         q = 'INSERT INTO hash_prefix (value, chunk_number, list_name, chunk_type) \
             VALUES (?, ?, ?, ?)'
-        params = [hash_prefix[k] for k in
-                        ('value', 'chunk_number', 'list_name', 'chunk_type')]
         try:
-            self.dbc.execute(q, params)
+            self.dbc.executemany(q, hash_prefixes)
         except sqlite3.IntegrityError as e:
             log.warn('Failed to insert chunk because of %s' % e)
 
@@ -428,23 +425,27 @@ class SqliteStorage(StorageBase):
         self.dbc.execute(q)
         self.db.commit()
 
-    def del_add_chunks(self, chunk_numbers):
+    def del_add_chunks(self, list_name, chunk_numbers):
         "Delete records associated with 'add' chunk"
         if not chunk_numbers:
             return
-        log.info('Deleting "add" chunks %s' % repr(chunk_numbers))
+        log.info('Deleting "add" chunks {} in list {}'.format(repr(chunk_numbers), list_name))
         for cn in self.expand_ranges(chunk_numbers):
-            q = 'DELETE FROM chunk WHERE chunk_type=? AND chunk_number=?'
+            q = 'DELETE FROM hash_prefix WHERE list_name=? AND chunk_type=? AND chunk_number=?'
+            self.dbc.execute(q, ['add', cn])
+            q = 'DELETE FROM chunk WHERE list_name=? AND chunk_type=? AND chunk_number=?'
             self.dbc.execute(q, ['add', cn])
         self.db.commit()
 
-    def del_sub_chunks(self, chunk_numbers):
+    def del_sub_chunks(self, list_name, chunk_numbers):
         "Delete records associated with 'sub' chunk"
         if not chunk_numbers:
             return
-        log.info('Deleting "sub" chunks %s' % repr(chunk_numbers))
+        log.info('Deleting "sub" chunks {} in list {}'.format(repr(chunk_numbers), list_name))
         for cn in self.expand_ranges(chunk_numbers):
-            q = 'DELETE FROM chunk WHERE chunk_type=? AND chunk_number=?'
+            q = 'DELETE FROM hash_prefix WHERE list_name=? AND chunk_type=? AND chunk_number=?'
+            self.dbc.execute(q, ['sub', cn])
+            q = 'DELETE FROM chunk WHERE list_name=? AND chunk_type=? AND chunk_number=?'
             self.dbc.execute(q, ['sub', cn])
         self.db.commit()
 
