@@ -101,8 +101,9 @@ class SqliteStorage(StorageBase):
             chunk_number integer NOT NULL,
             timestamp timestamp DEFAULT current_timestamp,
             list_name character varying(127) NOT NULL,
-            chunk_type TEXT CHECK( chunk_type IN ('add','sub')) NOT NULL,
-            PRIMARY KEY (chunk_number, list_name, chunk_type)
+            chunk_type TEXT NOT NULL,
+            PRIMARY KEY (chunk_number, list_name, chunk_type),
+            CONSTRAINT chk_chunk_type CHECK( chunk_type IN ('add','sub') )
             )"""
         )
         self.dbc.execute(
@@ -121,13 +122,22 @@ class SqliteStorage(StorageBase):
             chunk_number integer NOT NULL,
             timestamp timestamp without time zone DEFAULT current_timestamp,
             list_name character varying(127) NOT NULL,
-            chunk_type TEXT CHECK( chunk_type IN ('add','sub')) NOT NULL,
+            chunk_type TEXT NOT NULL,
             full_hash_expires_at timestamp NOT NULL DEFAULT current_timestamp,
             PRIMARY KEY (value, chunk_number, list_name, chunk_type),
+            CONSTRAINT chk_chunk_type CHECK( chunk_type IN ('add','sub') ),
             FOREIGN KEY(chunk_number, list_name, chunk_type)
                 REFERENCES chunk(chunk_number, list_name, chunk_type)
                 ON DELETE CASCADE
             )"""
+        )
+
+        self.dbc.execute(
+            """CREATE INDEX idx_hash_prefix_chunk_id ON hash_prefix (chunk_number, list_name, chunk_type)"""
+        )
+
+        self.dbc.execute(
+            """CREATE INDEX idx_full_hash_expires_at ON full_hash (expires_at)"""
         )
         self.db.commit()
 
