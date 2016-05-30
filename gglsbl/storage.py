@@ -101,9 +101,8 @@ class SqliteStorage(StorageBase):
             chunk_number integer NOT NULL,
             timestamp timestamp DEFAULT current_timestamp,
             list_name character varying(127) NOT NULL,
-            chunk_type TEXT NOT NULL,
-            PRIMARY KEY (chunk_number, list_name, chunk_type),
-            CONSTRAINT chk_chunk_type CHECK( chunk_type IN ('add','sub') )
+            chunk_type_sub BOOLEAN NOT NULL,
+            PRIMARY KEY (chunk_number, list_name, chunk_type_sub)
             )"""
         )
         self.dbc.execute(
@@ -115,27 +114,23 @@ class SqliteStorage(StorageBase):
             PRIMARY KEY (value, list_name)
             )"""
         )
-
         self.dbc.execute(
         """CREATE TABLE hash_prefix (
             value BLOB NOT NULL,
             chunk_number integer NOT NULL,
             timestamp timestamp without time zone DEFAULT current_timestamp,
             list_name character varying(127) NOT NULL,
-            chunk_type TEXT NOT NULL,
+            chunk_type_sub BOOLEAN NOT NULL,
             full_hash_expires_at timestamp NOT NULL DEFAULT current_timestamp,
-            PRIMARY KEY (value, chunk_number, list_name, chunk_type),
-            CONSTRAINT chk_chunk_type CHECK( chunk_type IN ('add','sub') ),
-            FOREIGN KEY(chunk_number, list_name, chunk_type)
-                REFERENCES chunk(chunk_number, list_name, chunk_type)
+            PRIMARY KEY (value, chunk_number, list_name, chunk_type_sub),
+            FOREIGN KEY(chunk_number, list_name, chunk_type_sub)
+                REFERENCES chunk(chunk_number, list_name, chunk_type_sub)
                 ON DELETE CASCADE
             )"""
         )
-
         self.dbc.execute(
-            """CREATE INDEX idx_hash_prefix_chunk_id ON hash_prefix (chunk_number, list_name, chunk_type)"""
+            """CREATE INDEX idx_hash_prefix_chunk_id ON hash_prefix (chunk_number, list_name, chunk_type_sub)"""
         )
-
         self.dbc.execute(
             """CREATE INDEX idx_full_hash_expires_at ON full_hash (expires_at)"""
         )
@@ -144,8 +139,8 @@ class SqliteStorage(StorageBase):
     def chunk_exists(self, chunk):
         "Check if given chunk records already exist in the database"
         q = 'SELECT COUNT(*) FROM chunk WHERE chunk_number=? AND \
-            chunk_type=? AND list_name=?'
-        self.dbc.execute(q, [chunk.chunk_number, chunk.chunk_type, chunk.list_name])
+            chunk_type_sub=? AND list_name=?'
+        self.dbc.execute(q, [chunk.chunk_number, (chunk.chunk_type == 'sub'), chunk.list_name])
         if self.dbc.fetchall()[0][0] > 0:
             return True
         return False
@@ -157,23 +152,23 @@ class SqliteStorage(StorageBase):
         hash_prefixes = []
         chunk_number = chunk.chunk_number
         list_name = chunk.list_name
-        chunk_type = chunk.chunk_type
+        chunk_type_sub = chunk.chunk_type == 'sub'
         for hash_value in chunk.hashes:
             hash_prefixes.append(
-                (sqlite3.Binary(hash_value), chunk_number, list_name, chunk_type)
+                (sqlite3.Binary(hash_value), chunk_number, list_name, chunk_type_sub)
             )
         self.insert_hash_prefixes(hash_prefixes)
         self.db.commit()
 
     def insert_chunk(self, chunk):
         "Insert hash prefixes from the chunk to the database"
-        q = 'INSERT INTO chunk (chunk_number, list_name, chunk_type) \
+        q = 'INSERT INTO chunk (chunk_number, list_name, chunk_type_sub) \
             VALUES (?, ?, ?)'
-        self.dbc.execute(q, [chunk.chunk_number, chunk.list_name, chunk.chunk_type])
+        self.dbc.execute(q, [chunk.chunk_number, chunk.list_name, (chunk.chunk_type=='sub')])
 
     def insert_hash_prefixes(self, hash_prefixes):
         "Insert individual hash prefix to the database"
-        q = 'INSERT INTO hash_prefix (value, chunk_number, list_name, chunk_type) \
+        q = 'INSERT INTO hash_prefix (value, chunk_number, list_name, chunk_type_sub) \
             VALUES (?, ?, ?, ?)'
         try:
             self.dbc.executemany(q, hash_prefixes)
@@ -190,8 +185,8 @@ class SqliteStorage(StorageBase):
                     VALUES (?, ?, current_timestamp, datetime(current_timestamp, '+%d SECONDS'))"
                 self.dbc.execute(q % cache_lifetime, [sqlite3.Binary(hash_value), list_name])
         q = "UPDATE hash_prefix SET full_hash_expires_at=datetime(current_timestamp, '+%d SECONDS') \
-            WHERE chunk_type='add' AND value=?"
-        self.dbc.execute(q % cache_lifetime, [sqlite3.Binary(hash_prefix)])
+            WHERE chunk_type_sub=? AND value=?"
+        self.dbc.execute(q % cache_lifetime, [False, sqlite3.Binary(hash_prefix)])
         self.db.commit()
 
     def full_hash_sync_required(self, hash_prefix):
@@ -200,8 +195,8 @@ class SqliteStorage(StorageBase):
         and that prefix needs to be re-queried
         """
         q = "SELECT COUNT(*) FROM hash_prefix WHERE \
-            full_hash_expires_at > current_timestamp AND chunk_type='add' AND value=?"
-        self.dbc.execute(q, [sqlite3.Binary(hash_prefix)])
+            full_hash_expires_at > current_timestamp AND chunk_type_sub=? AND value=?"
+        self.dbc.execute(q, [False, sqlite3.Binary(hash_prefix)])
         c = self.dbc.fetchall()[0][0]
         return c == 0
 
@@ -215,12 +210,12 @@ class SqliteStorage(StorageBase):
         """Check if hash prefix is in the list and does not have 'sub'
         status signifying that it should be evicted from the blacklist
         """
-        q = 'SELECT list_name FROM hash_prefix WHERE chunk_type=? AND value=?'
-        self.dbc.execute(q, ['add', sqlite3.Binary(hash_prefix)])
+        q = 'SELECT list_name FROM hash_prefix WHERE chunk_type_sub=? AND value=?'
+        self.dbc.execute(q, [False, sqlite3.Binary(hash_prefix)])
         lists_add = [r[0] for r in self.dbc.fetchall()]
         if len(lists_add) == 0:
             return False
-        self.dbc.execute(q, ['sub', sqlite3.Binary(hash_prefix)])
+        self.dbc.execute(q, [True, sqlite3.Binary(hash_prefix)])
         lists_sub = [r[0] for r in self.dbc.fetchall()]
         if len(lists_sub) == 0:
             return True
@@ -238,20 +233,21 @@ class SqliteStorage(StorageBase):
         if not chunk_numbers:
             return
         log.info('Deleting "{}" chunks {} from list {}'.format(chunk_type, repr(chunk_numbers), list_name))
+        chunk_type_sub = (chunk_type == 'sub')
         for lower_boundary, upper_boundary in self.iterate_ranges(chunk_numbers):
-            q = 'DELETE FROM hash_prefix WHERE chunk_type=? AND list_name=? AND chunk_number>=? AND chunk_number<=?'
-            self.dbc.execute(q, [chunk_type, list_name, lower_boundary, upper_boundary])
-            q = 'DELETE FROM chunk WHERE chunk_type=? AND list_name=? AND chunk_number>=? AND chunk_number<=?'
-            self.dbc.execute(q, [chunk_type, list_name, lower_boundary, upper_boundary])
+            q = 'DELETE FROM hash_prefix WHERE chunk_type_sub=? AND list_name=? AND chunk_number>=? AND chunk_number<=?'
+            self.dbc.execute(q, [chunk_type_sub, list_name, lower_boundary, upper_boundary])
+            q = 'DELETE FROM chunk WHERE chunk_type_sub=? AND list_name=? AND chunk_number>=? AND chunk_number<=?'
+            self.dbc.execute(q, [chunk_type_sub, list_name, lower_boundary, upper_boundary])
         self.db.commit()
 
     def get_existing_chunks(self):
         "Get the list of chunks that are available in the local cache"
         output = {}
-        for chunk_type in ('add', 'sub'):
+        for chunk_type, chunk_type_sub in [('add', 0), ('sub', 1)]:
             q = """SELECT list_name, group_concat(chunk_number) FROM chunk
-                WHERE chunk_type=? GROUP BY list_name"""
-            self.dbc.execute(q, [chunk_type])
+                WHERE chunk_type_sub=? GROUP BY list_name"""
+            self.dbc.execute(q, [chunk_type_sub])
             for list_name, chunks in self.dbc.fetchall():
                 if not output.has_key(list_name):
                     output[list_name] = {}
