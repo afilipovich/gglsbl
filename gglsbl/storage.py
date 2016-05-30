@@ -59,6 +59,29 @@ class StorageBase(object):
                         raise
         return nums
 
+    @staticmethod
+    def iterate_ranges(list_of_ranges):
+        """Do the opposite of compress_ranges()
+
+        E.g. '1-4,7' -> [1,2,3,4,7]
+        """
+        nums = []
+        for ranges in list_of_ranges:
+            for r in ranges.strip().split(','):
+                if type(r) is int:
+                    yield (r,r)
+                elif r.isdigit():
+                    yield (int(r), int(r))
+                else:
+                    try:
+                        r1, r2 = r.split('-')
+                        r1 = int(r1)
+                        r2 = int(r2) + 1
+                        yield((r1, r2))
+                    except ValueError as e:
+                        log.error('Failed to parse chunk range "%s"' % r)
+                        raise
+
 
 class SqliteStorage(StorageBase):
     """Storage abstraction for local GSB cache"""
@@ -201,32 +224,23 @@ class SqliteStorage(StorageBase):
         self.dbc.execute(q)
         self.db.commit()
 
-    def del_add_chunks(self, chunk_numbers):
-        "Delete records associated with 'add' chunk"
+    def del_chunks(self, chunk_type, list_name, chunk_numbers):
         if not chunk_numbers:
             return
-        log.info('Deleting "add" chunks %s' % repr(chunk_numbers))
-        for cn in self.expand_ranges(chunk_numbers):
-            q = 'DELETE FROM chunk WHERE chunk_type=? AND chunk_number=?'
-            self.dbc.execute(q, ['add', cn])
-        self.db.commit()
-
-    def del_sub_chunks(self, chunk_numbers):
-        "Delete records associated with 'sub' chunk"
-        if not chunk_numbers:
-            return
-        log.info('Deleting "sub" chunks %s' % repr(chunk_numbers))
-        for cn in self.expand_ranges(chunk_numbers):
-            q = 'DELETE FROM chunk WHERE chunk_type=? AND chunk_number=?'
-            self.dbc.execute(q, ['sub', cn])
+        log.info('Deleting "{}" chunks {} from list {}'.format(chunk_type, repr(chunk_numbers), list_name))
+        for lower_boundary, upper_boundary in self.iterate_ranges(chunk_numbers):
+            q = 'DELETE FROM hash_prefix WHERE chunk_type=? AND list_name=? AND chunk_number>=? AND chunk_number<=?'
+            self.dbc.execute(q, [chunk_type, list_name, lower_boundary, upper_boundary])
+            q = 'DELETE FROM chunk WHERE chunk_type=? AND list_name=? AND chunk_number>=? AND chunk_number<=?'
+            self.dbc.execute(q, [chunk_type, list_name, lower_boundary, upper_boundary])
         self.db.commit()
 
     def get_existing_chunks(self):
         "Get the list of chunks that are available in the local cache"
         output = {}
         for chunk_type in ('add', 'sub'):
-            q = "SELECT list_name, group_concat(chunk_number) FROM chunk \
-                WHERE chunk_type=? GROUP BY list_name"
+            q = """SELECT list_name, group_concat(chunk_number) FROM chunk
+                WHERE chunk_type=? GROUP BY list_name"""
             self.dbc.execute(q, [chunk_type])
             for list_name, chunks in self.dbc.fetchall():
                 if not output.has_key(list_name):

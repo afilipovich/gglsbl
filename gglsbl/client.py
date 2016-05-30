@@ -27,8 +27,9 @@ class SafeBrowsingList(object):
         if response.reset_required:
             self.storage.total_cleanup()
         try:
-            self.storage.del_add_chunks(response.del_add_chunks)
-            self.storage.del_sub_chunks(response.del_sub_chunks)
+            for chunk_type, v in response.del_chunks.items():
+                for list_name, chunk_numbers in v.items():
+                    self.storage.del_chunks(chunk_type, list_name, chunk_numbers)
             for chunk in response.chunks:
                 if self.storage.chunk_exists(chunk):
                     log.debug('chunk #%d of type %s exists in stored list %s, skipping',
