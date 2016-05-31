@@ -109,8 +109,7 @@ class DataResponse(object):
     to the local copy of hash prefixes list
     """
     def __init__(self, raw_data):
-        self.del_add_chunks = []
-        self.del_sub_chunks = []
+        self.del_chunks = {'add': {}, 'sub': {}}
         self.reset_required = False
         self._parseData(raw_data)
 
@@ -133,10 +132,14 @@ class DataResponse(object):
                 self.reset_required = True
             elif l.startswith('ad:'):
                 chunk_id = l.split(':')[1]
-                self.del_add_chunks.append(chunk_id)
+                if current_list_name not in self.del_chunks['add']:
+                    self.del_chunks['add'][current_list_name] = []
+                self.del_chunks['add'][current_list_name].append(chunk_id)
             elif l.startswith('sd:'):
                 chunk_id = l.split(':')[1]
-                self.del_sub_chunks.append(chunk_id)
+                if current_list_name not in self.del_chunks['sub']:
+                    self.del_chunks['sub'][current_list_name] = []
+                self.del_chunks['sub'][current_list_name].append(chunk_id)
             else:
                 raise RuntimeError('Response line has unexpected prefix: "%s"' % l)
         self.lists_data = lists_data
