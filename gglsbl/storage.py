@@ -256,24 +256,26 @@ class SqlAlchemyStorage(StorageBase):
             return True
         return False
 
-    def del_add_chunks(self, chunk_numbers):
-        "Delete records associated with 'add' chunk"
+    def del_chunks(self, chunk_type, list_name, chunk_numbers):
         if not chunk_numbers:
             return
-        log.info('Deleting "add" chunks %s' % repr(chunk_numbers))
+        log.info('Deleting "{}" chunks {} from list {}'.format(chunk_type, repr(chunk_numbers), list_name))
+        chunk_type_sub = (chunk_type == 'sub')
         with self.engine.begin() as connection:
-            for cn in self.expand_ranges(chunk_numbers):
-                q = Chunk.__table__.delete().where((Chunk.chunk_type_sub == False) & (Chunk.chunk_number == cn))
+            for lower_boundary, upper_boundary in self.iterate_ranges(chunk_numbers):
+                q = HashPrefix.__table__.delete().where(
+                    (HashPrefix.chunk_type_sub == chunk_type_sub) \
+                    & (HashPrefix.list_name == list_name) \
+                    & (HashPrefix.chunk_number >= lower_bondary) \
+                    & (HashPrefix.chunk_number <= upper_bondary)
+                )
                 connection.execute(q)
-
-    def del_sub_chunks(self, chunk_numbers):
-        "Delete records associated with 'sub' chunk"
-        if not chunk_numbers:
-            return
-        log.info('Deleting "sub" chunks %s' % repr(chunk_numbers))
-        with self.engine.begin() as connection:
-            for cn in self.expand_ranges(chunk_numbers):
-                q = Chunk.__table__.delete().where((Chunk.chunk_type_sub == True) & (Chunk.chunk_number == cn))
+                q = Chunk.__table__.delete().where(
+                    (Chunk.chunk_type_sub == chunk_type_sub) \
+                    & (Chunk.list_name == list_name) \
+                    & (Chunk.chunk_number >= lower_bondary) \
+                    & (Chunk.chunk_number <= upper_bondary)
+                )
                 connection.execute(q)
 
     def get_list_names(self):
