@@ -1,7 +1,7 @@
 gglsbl
 ======
 
-Python client library for Google Safe Browsing API
+Python client library for Google Safe Browsing API v3
 
 Disclaimer
 ----------
@@ -17,6 +17,7 @@ Quick start
 ###### Get Google API key
 Instructions can be found [here](https://developers.google.com/safe-browsing/lookup_guide#GettingStarted).
 Please note that v3.0 API key is different from v2.2 API.
+Since v4 API is out, v3.0 was renamed to 'Safe Browsing API (Legacy)'.
 
 ###### Install the library
 
