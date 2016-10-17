@@ -266,15 +266,15 @@ class SqlAlchemyStorage(StorageBase):
                 q = HashPrefix.__table__.delete().where(
                     (HashPrefix.chunk_type_sub == chunk_type_sub) \
                     & (HashPrefix.list_name == list_name) \
-                    & (HashPrefix.chunk_number >= lower_bondary) \
-                    & (HashPrefix.chunk_number <= upper_bondary)
+                    & (HashPrefix.chunk_number >= lower_boundary) \
+                    & (HashPrefix.chunk_number <= upper_boundary)
                 )
                 connection.execute(q)
                 q = Chunk.__table__.delete().where(
                     (Chunk.chunk_type_sub == chunk_type_sub) \
                     & (Chunk.list_name == list_name) \
-                    & (Chunk.chunk_number >= lower_bondary) \
-                    & (Chunk.chunk_number <= upper_bondary)
+                    & (Chunk.chunk_number >= lower_boundary) \
+                    & (Chunk.chunk_number <= upper_boundary)
                 )
                 connection.execute(q)
 

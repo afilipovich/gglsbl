@@ -32,19 +32,16 @@ class SafeBrowsingList(object):
         response = self.prefixListProtocolClient.retrieveMissingChunks(existing_chunks=existing_chunks)
         if response.reset_required:
             self.storage.total_cleanup()
-        try:
-            for chunk_type, v in response.del_chunks.items():
-                for list_name, chunk_numbers in v.items():
-                    self.storage.del_chunks(chunk_type, list_name, chunk_numbers)
-            for chunk in response.chunks:
-                if self.storage.chunk_exists(chunk):
-                    log.debug('chunk #%d of type %s exists in stored list %s, skipping',
-                        chunk.chunk_number, chunk.chunk_type, chunk.list_name)
-                    continue
-                self.storage.store_chunk(chunk)
-        except:
-            self.storage.db.rollback()
-            raise
+
+        for chunk_type, v in response.del_chunks.items():
+            for list_name, chunk_numbers in v.items():
+                self.storage.del_chunks(chunk_type, list_name, chunk_numbers)
+        for chunk in response.chunks:
+            if self.storage.chunk_exists(chunk):
+                log.debug('chunk #%d of type %s exists in stored list %s, skipping',
+                    chunk.chunk_number, chunk.chunk_type, chunk.list_name)
+                continue
+            self.storage.store_chunk(chunk)
 
     def sync_full_hashes(self, hash_prefix):
         "Sync full hashes starting with hash_prefix from remote server"
