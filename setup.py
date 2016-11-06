@@ -1,13 +1,13 @@
 #!/usr/bin/env python2.7
 
 from setuptools import setup
+import versioneer
 
 import sys, os
 
-__version__ = '1.0.0'
-
 setup(name='gglsbl',
-    version=__version__,
+    version=versioneer.get_version(),
+    cmdclass=versioneer.get_cmdclass(),
     description="Client library for Google Safe Browsing API",
     classifiers=[
         "Operating System :: POSIX",
@@ -22,6 +22,6 @@ setup(name='gglsbl',
     url='https://github.com/afilipovich/gglsbl',
     license='Apache2',
     packages=['gglsbl'],
-    install_requires=['argparse', 'pysqlite', 'protobuf'],
+    install_requires=['argparse', 'pysqlite', 'googleapiclient'],
     scripts=['bin/gglsbl_client.py'],
 )

@@ -1,6 +1,5 @@
 import unittest
 
-from .storage import StorageBase
 from .protocol import URL
 from . import SafeBrowsingList
 
@@ -56,6 +55,16 @@ class SafeBrowsingListTestCase(unittest.TestCase):
                 'b.c/',
                 'b.c/1/',
             ],
+            'http://a.b.c/1/2/?param=1': [
+                'a.b.c/1/2/?param=1',
+                'a.b.c/1/2/',
+                'a.b.c/',
+                'a.b.c/1/',
+                'b.c/1/2/?param=1',
+                'b.c/1/2/',
+                'b.c/',
+                'b.c/1/',
+            ],
             'http://1.2.3.4/1/2.html?param=1': [
                 '1.2.3.4/1/2.html?param=1',
                 '1.2.3.4/1/2.html',
@@ -102,58 +111,3 @@ class SafeBrowsingListTestCase(unittest.TestCase):
             p = list(URL.url_permutations(k))
             self.assertEqual(p, v)
 
-
-class RangesExpansionTestCase(unittest.TestCase):
-    def setUp(self):
-        self.expand_ranges =  StorageBase.expand_ranges
-
-    def test_double_range(self):
-        data = ["138764-138766,139076-139260"]
-        result = self.expand_ranges(data)
-        expected = range(138764, 138766+1) + range(139076, 139260+1)
-        self.assertEqual(result, expected)
-
-
-class RangesCompressionTestCase(unittest.TestCase):
-    def setUp(self):
-        self.compress_ranges =  StorageBase.compress_ranges
-
-    def test_single_range(self):
-        data = [1, 2, 3, 4, 5]
-        result = self.compress_ranges(data)
-        self.assertEqual(result, '1-5')
-
-    def test_double_range(self):
-        data = [1, 2, 3, 4, 6, 7, 8]
-        result = self.compress_ranges(data)
-        self.assertEqual(result, '1-4,6-8')
-
-    def test_mixed_ranges(self):
-        data = [1, 2, 3, 4, 6, 7, 8, 15, 20, 21, 22, 23]
-        result = self.compress_ranges(data)
-        self.assertEqual(result, '1-4,6-8,15,20-23')
-
-    def test_no_ranges(self):
-        data = [1, 5, 8, 12]
-        result = self.compress_ranges(data)
-        self.assertEqual(result, '1,5,8,12')
-
-    def test_random_order(self):
-        data = [6, 3, 20, 4, 22, 1, 7, 8, 23, 21, 15, 2]
-        result = self.compress_ranges(data)
-        self.assertEqual(result, '1-4,6-8,15,20-23')
-
-    def test_mixed_ranges2(self):
-        data = [1, 3, 4, 6, 7, 8, 15, 20, 21, 22, 23,33]
-        result = self.compress_ranges(data)
-        self.assertEqual(result, '1,3-4,6-8,15,20-23,33')
-
-    def test_one_element(self):
-        data = [4]
-        result = self.compress_ranges(data)
-        self.assertEqual(result, '4')
-
-    def test_empty(self):
-        data = []
-        result = self.compress_ranges(data)
-        self.assertEqual(result, None)

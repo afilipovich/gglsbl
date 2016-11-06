@@ -1,11 +1,13 @@
 #!/usr/bin/env python
 
+from base64 import b64encode, b64decode
+
 import logging
 log = logging.getLogger()
 log.addHandler(logging.NullHandler())
 
-from .protocol import PrefixListProtocolClient, FullHashProtocolClient, URL
-from .storage import SqliteStorage
+from gglsbl.protocol import SafeBrowsingApiClient, URL
+from gglsbl.storage import SqliteStorage, ThreatList, HashPrefixList
 
 
 class SafeBrowsingList(object):
@@ -15,12 +17,36 @@ class SafeBrowsingList(object):
     https://developers.google.com/safe-browsing/developers_guide_v3
     """
     def __init__(self, api_key, db_path='/tmp/gsb_v3.db', discard_fair_use_policy=False):
-        self.prefixListProtocolClient = PrefixListProtocolClient(api_key,
-                                discard_fair_use_policy=discard_fair_use_policy)
-        self.fullHashProtocolClient = FullHashProtocolClient(api_key)
+        self.api_client = SafeBrowsingApiClient(api_key)
         self.storage = SqliteStorage(db_path)
 
+    def verify_threat_list_checksum(self, threat_list, remote_checksum):
+        local_checksum = self.storage.hash_prefix_list_checksum(threat_list)
+        return remote_checksum == local_checksum
+
     def update_hash_prefix_cache(self):
+        threat_lists = self.api_client.get_threats_lists()
+        for entry in threat_lists:
+            threat_list = ThreatList.from_api_entry(entry)
+            self.storage.add_threat_list(threat_list)
+
+        for threat_list, client_state in self.storage.get_threat_lists():
+            for response in self.api_client.get_threats_update(client_state, threat_list):
+                response_threat_list = ThreatList(response['threatType'], response['platformType'], response['threatEntryType'])
+                if response['responseType'] == 'FULL_UPDATE':
+                    self.storage.delete_hash_prefix_list(response_threat_list)
+                for a in response.get('additions', []):
+                    hash_prefix_list = HashPrefixList(a['rawHashes']['prefixSize'], b64decode(a['rawHashes']['rawHashes']))
+                    self.storage.add_hash_prefix_list(response_threat_list, hash_prefix_list)
+                for r in response.get('removals', []):
+                    self.storage.remove_hash_prefix_indices(response_threat_list, r['rawIndices']['indices'])
+
+            if not self.verify_threat_list_checksum(response_threat_list, b64decode(response['checksum']['sha256'])):
+                raise Exception('Local cache checksum does not match the server one.')
+            break # temp for debug
+
+
+    def ___update_hash_prefix_cache(self):
         "Sync locally stored hash prefixes with remote server"
         existing_chunks = self.storage.get_existing_chunks()
         response = self.prefixListProtocolClient.retrieveMissingChunks(existing_chunks=existing_chunks)
