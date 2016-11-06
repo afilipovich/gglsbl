@@ -175,9 +175,10 @@ class SqliteStorage(object):
         self.db.commit()
 
     def update_threat_list_client_state(self, threat_list, client_state):
-        q = '''UPDATE threat_list SET timetstamp=current_timestamp, client_state=?
+        log.info('Setting client_state of threat list {} to {}'.format(str(threat_list), client_state))
+        q = '''UPDATE threat_list SET timestamp=current_timestamp, client_state=?
             WHERE threat_type=? AND platform_type=? AND threat_entry_type=?'''
-        params = [threat_list.threat_type, threat_list.platform_type, threat_list.threat_entry_type, client_state]
+        params = [client_state, threat_list.threat_type, threat_list.platform_type, threat_list.threat_entry_type]
         self.dbc.execute(q, params)
         self.db.commit()
 

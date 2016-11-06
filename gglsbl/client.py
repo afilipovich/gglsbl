@@ -40,7 +40,7 @@ class SafeBrowsingList(object):
                     self.storage.add_hash_prefix_list(response_threat_list, hash_prefix_list)
                 for r in response.get('removals', []):
                     self.storage.remove_hash_prefix_indices(response_threat_list, r['rawIndices']['indices'])
-
+                self.storage.update_threat_list_client_state(response_threat_list, response['newClientState'])
             if not self.verify_threat_list_checksum(response_threat_list, b64decode(response['checksum']['sha256'])):
                 raise Exception('Local cache checksum does not match the server one.')
             break # temp for debug
