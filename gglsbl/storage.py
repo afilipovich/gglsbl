@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import os
+import hashlib
 import sqlite3
 
 import logging
@@ -183,7 +184,17 @@ class SqliteStorage(object):
         self.db.commit()
 
     def hash_prefix_list_checksum(self, threat_list):
-        pass
+        """Returns SHA256 checksum for alphabetically-sorted concatenated list of hash prefixes
+        """
+        q = '''SELECT value FROM hash_prefix
+                WHERE threat_type=? AND platform_type=? AND threat_entry_type=?
+                ORDER BY value
+        '''
+        params = [threat_list.threat_type, threat_list.platform_type, threat_list.threat_entry_type]
+        self.dbc.execute(q, params)
+        all_hashes = ''.join([ str(h[0]) for h in self.dbc.fetchall() ])
+        checksum = hashlib.sha256(all_hashes).digest()
+        return checksum
 
     def add_hash_prefix_list(self, threat_list, hash_prefix_list):
         log.info('Storing {} entries of hash prefix list {}'.format(len(hash_prefix_list), str(threat_list)))
@@ -199,6 +210,9 @@ class SqliteStorage(object):
         self.db.commit()
 
     def remove_hash_prefix_indices(self, threat_list, indices):
+        """Remove records matching idices from a lexicographically-sorted local threat list.
+        """
+        log.info('Removing {} records from threat list "{}"'.format(len(indices), str(threat_list)))
         return
 
     def total_cleanup(self):
