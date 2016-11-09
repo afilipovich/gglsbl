@@ -9,6 +9,7 @@ import logging
 log = logging.getLogger()
 log.addHandler(logging.NullHandler())
 
+from gglsbl.utils import to_hex
 
 class ThreatList(object):
     def __init__(self, threat_type, platform_type, threat_entry_type):
@@ -37,7 +38,7 @@ class HashPrefixList(object):
 
     def __iter__(self):
         n = self.prefix_size
-        return (self.raw_hashes[i:i+n] for i in xrange(0, len(self.raw_hashes), n))
+        return (self.raw_hashes[i:i+n] for i in range(0, len(self.raw_hashes), n))
 
 
 class SqliteStorage(object):
@@ -110,8 +111,6 @@ class SqliteStorage(object):
             )
         self.db.commit()
 
-
-
     def lookup_full_hashes(self, hash_values):
         "Query DB to see if hash is blacklisted"
         q = '''SELECT threat_type,platform_type,threat_entry_type, expires_at < current_timestamp AS has_expired
@@ -141,12 +140,13 @@ class SqliteStorage(object):
             for h in dbc.fetchall():
                 value, threat_type, platform_type, threat_entry_type, negative_cache_expired = h
                 threat_list = ThreatList(threat_type, platform_type, threat_entry_type)
-                output.append((threat_list, str(value), negative_cache_expired))
+                output.append((threat_list, bytes(value), negative_cache_expired))
         return output
 
     def store_full_hash(self, threat_list, hash_value, cache_duration, malware_threat_type):
         "Store full hash found for the given hash prefix"
-        log.info('Storing full hash {} to list {} with cache duration {}'.format(hash_value.encode("hex"), str(threat_list), cache_duration))
+
+        log.info('Storing full hash {} to list {} with cache duration {}'.format(to_hex(hash_value), str(threat_list), cache_duration))
         qi = '''INSERT OR IGNORE INTO full_hash
                     (value, threat_type, platform_type, threat_entry_type, malware_threat_type, downloaded_at)
                 VALUES
@@ -184,6 +184,8 @@ class SqliteStorage(object):
         self.db.commit()
 
     def get_threat_lists(self):
+        """Get a list of known threat lists including clientState values.
+        """
         q = '''SELECT threat_type,platform_type,threat_entry_type,client_state FROM threat_list'''
         output = []
         with self.get_cursor() as dbc:
@@ -195,6 +197,8 @@ class SqliteStorage(object):
         return output
 
     def add_threat_list(self, threat_list):
+        """Add threat list entry if it does not exist.
+        """
         q = '''INSERT OR IGNORE INTO threat_list
                     (threat_type, platform_type, threat_entry_type, timestamp)
                 VALUES
@@ -224,7 +228,7 @@ class SqliteStorage(object):
         params = [threat_list.threat_type, threat_list.platform_type, threat_list.threat_entry_type]
         with self.get_cursor() as dbc:
             dbc.execute(q, params)
-            all_hashes = ''.join([ str(h[0]) for h in dbc.fetchall() ])
+            all_hashes = b''.join([ bytes(h[0]) for h in dbc.fetchall() ])
             checksum = hashlib.sha256(all_hashes).digest()
         return checksum
 
@@ -237,7 +241,7 @@ class SqliteStorage(object):
         '''
         with self.get_cursor() as dbc:
             for prefix_value in hash_prefix_list:
-                cue = prefix_value[0:4].encode("hex")
+                cue = to_hex(prefix_value[0:4])
                 params = [sqlite3.Binary(prefix_value), cue, threat_list.threat_type,
                         threat_list.platform_type, threat_list.threat_entry_type]
                 dbc.execute(q, params)
@@ -256,7 +260,7 @@ class SqliteStorage(object):
             dbc.execute(q, params)
             i = 0
             for h in dbc.fetchall():
-                v = str(h[0])
+                v = bytes(h[0])
                 if i in indices:
                     values_to_remove.append(v)
                 i += 1
@@ -271,10 +275,10 @@ class SqliteStorage(object):
         '''
         prefixes_to_remove = self.get_hash_prefix_values_to_remove(threat_list, indices)
         with self.get_cursor() as dbc:
-            for i in xrange(0, len(prefixes_to_remove), batch_size):
+            for i in range(0, len(prefixes_to_remove), batch_size):
                 remove_batch = prefixes_to_remove[i:(i+batch_size)]
                 params = [threat_list.threat_type, threat_list.platform_type, threat_list.threat_entry_type] + \
-                                map(sqlite3.Binary, remove_batch)
+                                [sqlite3.Binary(b) for b in remove_batch]
                 dbc.execute(q.format(','.join(['?'] * len(remove_batch))), params)
 
     def total_cleanup(self):

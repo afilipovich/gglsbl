@@ -6,6 +6,7 @@ import logging
 log = logging.getLogger()
 log.addHandler(logging.NullHandler())
 
+from gglsbl.utils import to_hex
 from gglsbl.protocol import SafeBrowsingApiClient, URL
 from gglsbl.storage import SqliteStorage, ThreatList, HashPrefixList
 
@@ -48,10 +49,10 @@ class SafeBrowsingList(object):
                 self.storage.populate_hash_prefix_list(response_threat_list, hash_prefix_list)
             expected_checksum = b64decode(response['checksum']['sha256'])
             if self.verify_threat_list_checksum(response_threat_list, expected_checksum):
-                log.info('Local cache checksum matches the server: {}'.format(expected_checksum.encode('hex')))
+                log.info('Local cache checksum matches the server: {}'.format(to_hex(expected_checksum)))
                 self.storage.update_threat_list_client_state(response_threat_list, response['newClientState'])
             else:
-                raise Exception('Local cache checksum does not match the server: "{}". Consider removing {}'.format(expected_checksum.encode('hex')), self.storage.db_path)
+                raise Exception('Local cache checksum does not match the server: "{}". Consider removing {}'.format(to_hex(expected_checksum), self.storage.db_path))
 
     def sync_full_hashes(self, hash_prefixes):
         "Download full hashes matching hash_prefixes. Also update cache expiration timetsamps."
@@ -93,7 +94,7 @@ class SafeBrowsingList(object):
         Returns names of lists it was found in.
         """
         full_hashes = list(full_hashes)
-        cues = [fh[0:4].encode("hex") for fh in full_hashes]
+        cues = [to_hex(fh[0:4]) for fh in full_hashes]
         result = []
         try:
             matching_prefixes = {}

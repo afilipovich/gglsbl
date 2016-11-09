@@ -1,6 +1,11 @@
 #!/usr/bin/env python
 
-import urllib, urlparse
+try:
+    import urllib, urlparse
+except ImportError:
+    import urllib.parse as urllib
+    from urllib import parse as urlparse
+
 import struct
 import time
 import posixpath
@@ -98,7 +103,7 @@ class SafeBrowsingApiClient(object):
           }
         }
         for prefix in prefixes:
-            request_body['threatInfo']['threatEntries'].append({"hash": b64encode(prefix)})
+            request_body['threatInfo']['threatEntries'].append({"hash": b64encode(prefix).decode()})
         for ((threatType, platformType, threatEntryType), clientState) in client_state.items():
             request_body['clientStates'].append(clientState)
             if threatType not in request_body['threatInfo']['threatTypes']:
@@ -191,7 +196,7 @@ class URL(object):
             l = min(len(parts),5)
             if l > 4:
                 yield host
-            for i in xrange(l-1):
+            for i in range(l-1):
                 yield '.'.join(parts[i-l:])
         def url_path_permutations(path):
             yield path
@@ -202,7 +207,7 @@ class URL(object):
                 yield path
             path_parts = path.split('/')[0:-1]
             curr_path = ''
-            for i in xrange(min(4, len(path_parts) )):
+            for i in range(min(4, len(path_parts) )):
                 curr_path = curr_path + path_parts[i] + '/'
                 yield curr_path
         protocol, address_str = urllib.splittype(url)
@@ -221,7 +226,7 @@ class URL(object):
     @staticmethod
     def digest(url):
         "Hash the URL"
-        return hashlib.sha256(url).digest()
+        return hashlib.sha256(url.encode('utf-8')).digest()
 
 
 if __name__ == '__main__':
