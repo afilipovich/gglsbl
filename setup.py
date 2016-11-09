@@ -22,6 +22,6 @@ setup(name='gglsbl',
     url='https://github.com/afilipovich/gglsbl',
     license='Apache2',
     packages=['gglsbl'],
-    install_requires=['argparse', 'pysqlite', 'googleapiclient'],
+    install_requires=['argparse', 'pysqlite', 'googleapiclient', 'versioneer'],
     scripts=['bin/gglsbl_client.py'],
 )

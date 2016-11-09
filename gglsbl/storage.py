@@ -112,32 +112,32 @@ class SqliteStorage(object):
 
 
 
-    def lookup_full_hash(self, hash_value):
+    def lookup_full_hashes(self, hash_values):
         "Query DB to see if hash is blacklisted"
         q = '''SELECT threat_type,platform_type,threat_entry_type, expires_at < current_timestamp AS has_expired
-                FROM full_hash WHERE value=?
+                FROM full_hash WHERE value IN ({})
         '''
         output = []
         with self.get_cursor() as dbc:
-            dbc.execute(q, [sqlite3.Binary(hash_value)])
+            dbc.execute(q.format(','.join(['?']*len(hash_values))), [sqlite3.Binary(hv) for hv in hash_values])
             for h in dbc.fetchall():
                 threat_type, platform_type, threat_entry_type, has_expired = h
                 threat_list = ThreatList(threat_type, platform_type, threat_entry_type)
                 output.append((threat_list, has_expired))
         return output
 
-    def lookup_hash_prefix(self, cue):
+    def lookup_hash_prefix(self, cues):
         """Lookup hash prefixes by cue (first 4 bytes of hash)
 
         Returns a tuple of (threat_list, value, negative_cache_expired).
         """
         q = '''SELECT value,threat_type,platform_type,threat_entry_type,
                     negative_expires_at > current_timestamp AS negative_cache_expired
-                FROM hash_prefix WHERE cue=?
+                FROM hash_prefix WHERE cue IN ({})
         '''
         output = []
         with self.get_cursor() as dbc:
-            dbc.execute(q, [cue])
+            dbc.execute(q.format(','.join(['?'] * len(cues))), cues)
             for h in dbc.fetchall():
                 value, threat_type, platform_type, threat_entry_type, negative_cache_expired = h
                 threat_list = ThreatList(threat_type, platform_type, threat_entry_type)

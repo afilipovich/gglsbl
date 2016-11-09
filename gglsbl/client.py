@@ -82,34 +82,35 @@ class SafeBrowsingList(object):
     def lookup_url(self, url):
         "Look up URL in Safe Browsing blacklists"
         url_hashes = URL(url).hashes
-        for url_hash in url_hashes:
-            list_name = self.lookup_hash(url_hash)
-            if list_name:
-                return list_name
+        list_names = self.lookup_hash(url_hashes)
+        if list_names:
+            return list_names
         return None
 
-    def lookup_hash(self, full_hash):
+    def lookup_hash(self, full_hashes):
         """Lookup URL hash in blacklists
 
         Returns names of lists it was found in.
         """
-        cue = full_hash[0:4].encode("hex")
+        full_hashes = list(full_hashes)
+        cues = [fh[0:4].encode("hex") for fh in full_hashes]
         result = []
         try:
             matching_prefixes = {}
             is_potential_threat = False
             # First lookup hash prefixes which match full URL hash
-            for (threat_list, hash_prefix, negative_cache_expired) in self.storage.lookup_hash_prefix(cue):
-                if full_hash.startswith(hash_prefix):
-                    is_potential_threat = True
-                    # consider hash prefix negative cache as expired if it is expired in at least one threat list
-                    matching_prefixes[hash_prefix] = matching_prefixes.get(hash_prefix, False) or negative_cache_expired
+            for (threat_list, hash_prefix, negative_cache_expired) in self.storage.lookup_hash_prefix(cues):
+                for full_hash in full_hashes:
+                    if full_hash.startswith(hash_prefix):
+                        is_potential_threat = True
+                        # consider hash prefix negative cache as expired if it is expired in at least one threat list
+                        matching_prefixes[hash_prefix] = matching_prefixes.get(hash_prefix, False) or negative_cache_expired
             # if none matches, URL hash is clear
             if not is_potential_threat:
                 return []
             # if there is non-expired full hash, URL is blacklisted
             matching_expired_threat_lists = set()
-            for threat_list, has_expired in self.storage.lookup_full_hash(full_hash):
+            for threat_list, has_expired in self.storage.lookup_full_hashes(full_hashes):
                 if has_expired:
                     matching_expired_threat_lists.add(threat_list)
                 else:
@@ -127,7 +128,7 @@ class SafeBrowsingList(object):
             # cache prefix entries with expired negative cache. Both require full hash sync.
             self.sync_full_hashes(matching_prefixes.keys())
             # Now repeat full hash lookup
-            for threat_list, has_expired in self.storage.lookup_full_hash(full_hash):
+            for threat_list, has_expired in self.storage.lookup_full_hashes(full_hashes):
                 if not has_expired:
                     result.append(threat_list)
         except:
