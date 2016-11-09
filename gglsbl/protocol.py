@@ -21,17 +21,17 @@ del get_versions
 
 
 class SafeBrowsingApiClient(object):
-    def __init__(self, developerKey, clientId='gglsbl', clientVersion=__version__, respect_fair_use_policy=True):
+    def __init__(self, developerKey, clientId='gglsbl', clientVersion=__version__, discard_fair_use_policy=True):
         self.clientId = clientId
         self.clientVersion = clientVersion
-        self.respect_fair_use_policy = respect_fair_use_policy
-        if not self.respect_fair_use_policy:
+        self.discard_fair_use_policy = discard_fair_use_policy
+        if self.discard_fair_use_policy:
             log.warn('Circumventing request frequency throttling is against Safe Browsing API policy.')
         self.service = build('safebrowsing', 'v4', developerKey=developerKey)
         self.next_request_no_sooner_than = None
 
     def set_wait_duration(self, minimum_wait_duration):
-        if not self.respect_fair_use_policy:
+        if self.discard_fair_use_policy:
             return
         if minimum_wait_duration is None:
             self.next_request_no_sooner_than = None

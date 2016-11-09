@@ -27,7 +27,7 @@ def setupArgsParser():
                 required=True,
                 help='Safe Browsing API key [REQUIRED]')
     parser.add_argument('--db-path',
-                default='/tmp/gsb_v3.db',
+                default='/tmp/gsb_v4.db',
                 help='Path to SQLite DB')
     parser.add_argument('--log',
                 default=None,
@@ -76,7 +76,7 @@ def main():
             print '%s is blacklisted in %s' % (args.check_url, bl)
         sys.exit(0)
     if args.onetime:
-        sbl = SafeBrowsingList(args.api_key, db_path=args.db_path, respect_fair_use_policy=False)
+        sbl = SafeBrowsingList(args.api_key, db_path=args.db_path, discard_fair_use_policy=True)
         run_sync(sbl)
     else:
         sbl = SafeBrowsingList(args.api_key, db_path=args.db_path)
