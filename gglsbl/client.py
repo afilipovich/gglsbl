@@ -14,11 +14,14 @@ class SafeBrowsingList(object):
     """Interface for Google Safe Browsing API
 
     supporting partial update of the local cache.
-    https://developers.google.com/safe-browsing/developers_guide_v3
+    https://developers.google.com/safe-browsing/v4/
     """
-    def __init__(self, api_key, db_path='/tmp/gsb_v3.db', discard_fair_use_policy=False):
+
+    def __init__(self, api_key, db_path='/tmp/gsb_v3.db', discard_fair_use_policy=False,
+                        platforms = ['ALL_PLATFORMS', 'IOS', 'ANDROID']):
         self.api_client = SafeBrowsingApiClient(api_key)
         self.storage = SqliteStorage(db_path)
+        self.platforms = platforms
 
     def verify_threat_list_checksum(self, threat_list, remote_checksum):
         local_checksum = self.storage.hash_prefix_list_checksum(threat_list)
@@ -28,7 +31,8 @@ class SafeBrowsingList(object):
         threat_lists = self.api_client.get_threats_lists()
         for entry in threat_lists:
             threat_list = ThreatList.from_api_entry(entry)
-            self.storage.add_threat_list(threat_list)
+            if threat_list.platform_type in self.platforms:
+                self.storage.add_threat_list(threat_list)
 
         for threat_list, client_state in self.storage.get_threat_lists():
             for response in self.api_client.get_threats_update(client_state, threat_list):
@@ -47,36 +51,30 @@ class SafeBrowsingList(object):
                 else:
                     raise Exception('Local cache checksum does not match the server: "{}"'.format(expected_checksum.encode('hex')))
 
+    def sync_full_hashes(self, hash_prefixes):
+        "Download full hashes matching hash_prefixes. Also update cache expiration timetsamps."
+        threat_lists = self.storage.get_threat_lists()
+        client_state = dict([(t.as_tuple(), s) for t,s in threat_lists])
+        fh_response = self.api_client.get_full_hashes(hash_prefixes, client_state)
 
-    def ___update_hash_prefix_cache(self):
-        "Sync locally stored hash prefixes with remote server"
-        existing_chunks = self.storage.get_existing_chunks()
-        response = self.prefixListProtocolClient.retrieveMissingChunks(existing_chunks=existing_chunks)
-        if response.reset_required:
-            self.storage.total_cleanup()
-        try:
-            for chunk_type, v in response.del_chunks.items():
-                for list_name, chunk_numbers in v.items():
-                    self.storage.del_chunks(chunk_type, list_name, chunk_numbers)
-            for chunk in response.chunks:
-                if self.storage.chunk_exists(chunk):
-                    log.debug('chunk #%d of type %s exists in stored list %s, skipping',
-                        chunk.chunk_number, chunk.chunk_type, chunk.list_name)
-                    continue
-                self.storage.store_chunk(chunk)
-        except:
-            self.storage.db.rollback()
-            raise
+        # update negative cache for each hash prefix
+        # store full hash (insert or update) with positive cache bumped up
+        for m in fh_response['matches']:
+            threat_list = ThreatList(m['threatType'], m['platformType'], m['threatEntryType'])
+            hash_value = b64decode(m['threat']['hash'])
+            cache_duration = int(m['cacheDuration'].strip('s'))
+            malware_threat_type = None
+            for metadata in m['threatEntryMetadata'].get('entries', []):
+                k = b64decode(metadata['key'])
+                v = b64decode(metadata['value'])
+                if k == 'malware_threat_type':
+                    malware_threat_type = v
+            self.storage.store_full_hash(threat_list, hash_value, cache_duration, malware_threat_type)
 
-    def sync_full_hashes(self, hash_prefix):
-        "Sync full hashes starting with hash_prefix from remote server"
-        if not self.storage.full_hash_sync_required(hash_prefix):
-            log.debug('Cached full hash entries are still valid for "0x%s", no sync required.', hash_prefix.encode("hex"))
-            return
-        full_hashes = self.fullHashProtocolClient.getHashes([hash_prefix])
-        if not full_hashes:
-            return
-        self.storage.store_full_hashes(hash_prefix, full_hashes)
+        negative_cache_duration = int(fh_response['negativeCacheDuration'].strip('s'))
+        for prefix_value in hash_prefixes:
+            for threat_list in threat_lists:
+                self.storage.update_hash_prefix_expiration(threat_list[0], prefix_value, negative_cache_duration)
 
     def lookup_url(self, url):
         "Look up URL in Safe Browsing blacklists"
@@ -92,12 +90,43 @@ class SafeBrowsingList(object):
 
         Returns names of lists it was found in.
         """
-        hash_prefix = full_hash[0:4]
+        cue = full_hash[0:4].encode("hex")
+        result = []
         try:
-            if self.storage.lookup_hash_prefix(hash_prefix):
-                self.sync_full_hashes(hash_prefix)
-                return self.storage.lookup_full_hash(full_hash)
+            matching_prefixes = {}
+            is_potential_threat = False
+            # First lookup hash prefixes which match full URL hash
+            for (threat_list, hash_prefix, negative_cache_expired) in self.storage.lookup_hash_prefix(cue):
+                if full_hash.startswith(hash_prefix):
+                    is_potential_threat = True
+                    # consider hash prefix negative cache as expired if it is expired in at least one threat list
+                    matching_prefixes[hash_prefix] = matching_prefixes.get(hash_prefix, False) or negative_cache_expired
+            # if none matches, URL hash is clear
+            if not is_potential_threat:
+                return []
+            # if there is non-expired full hash, URL is blacklisted
+            matching_expired_threat_lists = set()
+            for threat_list, has_expired in self.storage.lookup_full_hash(full_hash):
+                if has_expired:
+                    matching_expired_threat_lists.add(threat_list)
+                else:
+                    result.append(threat_list)
+            if result:
+                return result
+
+            # If there are no matching expired full hash entries
+            # and negative cache is still current for all prefixes, consider it safe
+            if len(matching_expired_threat_lists) == 0 and sum(map(int, matching_prefixes.values())):
+                return []
+
+            # Now we can assume that there are expired matching full hash entries and/or
+            # cache prefix entries with expired negative cache. Both require full hash sync.
+            self.sync_full_hashes(matching_prefixes.keys())
+            # Now repeat full hash lookup
+            for threat_list, has_expired in self.storage.lookup_full_hash(full_hash):
+                if not has_expired:
+                    result.append(threat_list)
         except:
             self.storage.db.rollback()
             raise
-
+        return result

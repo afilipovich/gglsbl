@@ -56,7 +56,7 @@ class SafeBrowsingApiClient(object):
     def get_full_hashes(self, prefixes, client_state):
         """Find full hashes matching hash prefixes.
 
-        client_state is a dict which looks like {(threatType, platformType): clientState}
+        client_state is a dict which looks like {(threatType, platformType, threatEntryType): clientState}
         """
         request_body = {
           "client": {
@@ -67,18 +67,20 @@ class SafeBrowsingApiClient(object):
           "threatInfo": {
             "threatTypes":      [],
             "platformTypes":    [],
-            "threatEntryTypes": ["URL"],
+            "threatEntryTypes": [],
             "threatEntries": [],
           }
         }
         for prefix in prefixes:
             request_body['threatInfo']['threatEntries'].append({"hash": b64encode(prefix)})
-        for ((threatType, platformType), clientState) in client_state.items():
+        for ((threatType, platformType, threatEntryType), clientState) in client_state.items():
             request_body['clientStates'].append(clientState)
             if threatType not in request_body['threatInfo']['threatTypes']:
                 request_body['threatInfo']['threatTypes'].append(threatType)
-            if platformType not in request_body['threatInfo']['platformTypes'].append(platformType):
+            if platformType not in request_body['threatInfo']['platformTypes']:
                 request_body['threatInfo']['platformTypes'].append(platformType)
+            if threatEntryType not in request_body['threatInfo']['threatEntryTypes']:
+                request_body['threatInfo']['threatEntryTypes'].append(threatEntryType)
         response = self.service.fullHashes().find(body=request_body).execute()
         return response
 

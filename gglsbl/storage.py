@@ -20,8 +20,11 @@ class ThreatList(object):
     def from_api_entry(cls, entry):
         return cls(entry['threatType'], entry['platformType'], entry['threatEntryType'])
 
+    def as_tuple(self):
+        return (self.threat_type, self.platform_type, self.threat_entry_type)
+
     def __repr__(self):
-        return '/'.join([self.threat_type, self.platform_type, self.threat_entry_type])
+        return '/'.join(self.as_tuple())
 
 
 class HashPrefixList(object):
@@ -65,7 +68,7 @@ class SqliteStorage(object):
                 platform_type character varying(128) NOT NULL,
                 threat_entry_type character varying(128) NOT NULL,
                 client_state character varying(42),
-                timestamp timestamp DEFAULT current_timestamp,
+                timestamp timestamp without time zone DEFAULT current_timestamp,
                 PRIMARY KEY (threat_type, platform_type, threat_entry_type)
                 )"""
             )
@@ -75,8 +78,8 @@ class SqliteStorage(object):
                 threat_type character varying(128) NOT NULL,
                 platform_type character varying(128) NOT NULL,
                 threat_entry_type character varying(128) NOT NULL,
-                downloaded_at timestamp DEFAULT current_timestamp,
-                expires_at timestamp without time zone NOT NULL,
+                downloaded_at timestamp without time zone DEFAULT current_timestamp,
+                expires_at timestamp without time zone NOT NULL DEFAULT current_timestamp,
                 malware_threat_type varchar(32),
                 PRIMARY KEY (value, threat_type, platform_type, threat_entry_type)
                 )"""
@@ -84,22 +87,26 @@ class SqliteStorage(object):
             dbc.execute(
             """CREATE TABLE hash_prefix (
                 value BLOB NOT NULL,
+                cue character varying(4) NOT NULL,
                 threat_type character varying(128) NOT NULL,
                 platform_type character varying(128) NOT NULL,
                 threat_entry_type character varying(128) NOT NULL,
                 timestamp timestamp without time zone DEFAULT current_timestamp,
-                negative_expires_at timestamp NOT NULL DEFAULT current_timestamp,
+                negative_expires_at timestamp without time zone NOT NULL DEFAULT current_timestamp,
                 PRIMARY KEY (value, threat_type, platform_type, threat_entry_type),
                 FOREIGN KEY(threat_type, platform_type, threat_entry_type)
                     REFERENCES threat_list(threat_type, platform_type, threat_entry_type)
                     ON DELETE CASCADE
                 )"""
             )
-    #        dbc.execute(
-    #            """CREATE INDEX idx_hash_prefix_chunk_id ON hash_prefix (chunk_number, list_name, chunk_type_sub)"""
-    #        )
+            dbc.execute(
+                """CREATE INDEX idx_hash_prefix_cue ON hash_prefix (cue)"""
+            )
             dbc.execute(
                 """CREATE INDEX idx_full_hash_expires_at ON full_hash (expires_at)"""
+            )
+            dbc.execute(
+                """CREATE INDEX idx_full_hash_value ON full_hash (value)"""
             )
         self.db.commit()
 
@@ -107,38 +114,43 @@ class SqliteStorage(object):
 
     def lookup_full_hash(self, hash_value):
         "Query DB to see if hash is blacklisted"
-        q = '''SELECT threat_type,platform_type,threat_entry_type
-                FROM full_hash WHERE value=? AND expires_at < current_timestamp
+        q = '''SELECT threat_type,platform_type,threat_entry_type, expires_at < current_timestamp AS has_expired
+                FROM full_hash WHERE value=?
         '''
         output = []
         with self.get_cursor() as dbc:
             dbc.execute(q, [sqlite3.Binary(hash_value)])
             for h in dbc.fetchall():
-                threat_type, platform_type, threat_entry_type = h
+                threat_type, platform_type, threat_entry_type, has_expired = h
                 threat_list = ThreatList(threat_type, platform_type, threat_entry_type)
-                output.append(threat_list)
+                output.append((threat_list, has_expired))
         return output
 
-    def lookup_hash_prefix(self, hash_prefix):
-        q = '''SELECT threat_type,platform_type,threat_entry_type
-                    neagative_expires_at > current_timetsamp AS negative_cache_expired
-                FROM hash_prefix WHERE value=?
+    def lookup_hash_prefix(self, cue):
+        """Lookup hash prefixes by cue (first 4 bytes of hash)
+
+        Returns a tuple of (threat_list, value, negative_cache_expired).
+        """
+        q = '''SELECT value,threat_type,platform_type,threat_entry_type,
+                    negative_expires_at > current_timestamp AS negative_cache_expired
+                FROM hash_prefix WHERE cue=?
         '''
         output = []
         with self.get_cursor() as dbc:
-            execute(q, [sqlite3.Binary(hash_value)])
+            dbc.execute(q, [cue])
             for h in dbc.fetchall():
-                threat_type, platform_type, threat_entry_type = h
+                value, threat_type, platform_type, threat_entry_type, negative_cache_expired = h
                 threat_list = ThreatList(threat_type, platform_type, threat_entry_type)
-                output.append((threat_list, negative_cache_expired))
+                output.append((threat_list, str(value), negative_cache_expired))
         return output
 
     def store_full_hash(self, threat_list, hash_value, cache_duration, malware_threat_type):
         "Store full hash found for the given hash prefix"
+        log.info('Storing full hash {} to list {} with cache duration {}'.format(hash_value.encode("hex"), str(threat_list), cache_duration))
         qi = '''INSERT OR IGNORE INTO full_hash
                     (value, threat_type, platform_type, threat_entry_type, malware_threat_type, downloaded_at)
                 VALUES
-                    (?, ?, ?, ?, current_timestamp)
+                    (?, ?, ?, ?, ?, current_timestamp)
         '''
         qu = "UPDATE full_hash SET expires_at=datetime(current_timestamp, '+%d SECONDS') \
             WHERE value=? AND threat_type=? AND platform_type=? AND threat_entry_type=?"
@@ -162,13 +174,13 @@ class SqliteStorage(object):
             dbc.execute(q, parameters)
         self.db.commit()
 
-    def update_hash_prefix_expiration(self, threat_list, prefix_value, negative_cache_expires_at):
-        q = "UPDATE hash_prefix SET negative_cache_expires_at=datetime(current_timestamp, '+%d SECONDS') \
+    def update_hash_prefix_expiration(self, threat_list, prefix_value, negative_cache_duration):
+        q = "UPDATE hash_prefix SET negative_expires_at=datetime(current_timestamp, '+%d SECONDS') \
             WHERE value=? AND threat_type=? AND platform_type=? AND threat_entry_type=?"
         parameters = [sqlite3.Binary(prefix_value), threat_list.threat_type,
                     threat_list.platform_type, threat_list.threat_entry_type]
         with self.get_cursor() as dbc:
-            dbc.execute(q % int(negative_cache_expires_at), parameters)
+            dbc.execute(q % int(negative_cache_duration), parameters)
         self.db.commit()
 
     def get_threat_lists(self):
@@ -219,13 +231,14 @@ class SqliteStorage(object):
     def populate_hash_prefix_list(self, threat_list, hash_prefix_list):
         log.info('Storing {} entries of hash prefix list {}'.format(len(hash_prefix_list), str(threat_list)))
         q = '''INSERT INTO hash_prefix
-                    (value, threat_type, platform_type, threat_entry_type, timestamp)
+                    (value, cue, threat_type, platform_type, threat_entry_type, timestamp)
                 VALUES
-                    (?, ?, ?, ?, current_timestamp)
+                    (?, ?, ?, ?, ?, current_timestamp)
         '''
         with self.get_cursor() as dbc:
             for prefix_value in hash_prefix_list:
-                params = [sqlite3.Binary(prefix_value), threat_list.threat_type,
+                cue = prefix_value[0:4].encode("hex")
+                params = [sqlite3.Binary(prefix_value), cue, threat_list.threat_type,
                         threat_list.platform_type, threat_list.threat_entry_type]
                 dbc.execute(q, params)
         #self.db.commit()
@@ -243,7 +256,7 @@ class SqliteStorage(object):
             dbc.execute(q, params)
             i = 0
             for h in dbc.fetchall():
-                v = h[0]
+                v = str(h[0])
                 if i in indices:
                     values_to_remove.append(v)
                 i += 1
