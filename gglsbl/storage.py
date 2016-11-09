@@ -232,9 +232,7 @@ class SqliteStorage(object):
 
     def get_hash_prefix_values_to_remove(self, threat_list, indices):
         log.info('Removing {} records from threat list "{}"'.format(len(indices), str(threat_list)))
-        log.info(str(indices))
         indices = set(indices)
-
         q = '''SELECT value FROM hash_prefix
                 WHERE threat_type=? AND platform_type=? AND threat_entry_type=?
                 ORDER BY value
@@ -254,15 +252,17 @@ class SqliteStorage(object):
     def remove_hash_prefix_indices(self, threat_list, indices):
         """Remove records matching idices from a lexicographically-sorted local threat list.
         """
+        batch_size = 40
         q = '''DELETE FROM hash_prefix
                 WHERE threat_type=? AND platform_type=? AND threat_entry_type=? AND value IN ({})
         '''
         prefixes_to_remove = self.get_hash_prefix_values_to_remove(threat_list, indices)
-        params = [threat_list.threat_type, threat_list.platform_type, threat_list.threat_entry_type] + \
-                        map(sqlite3.Binary, prefixes_to_remove)
         with self.get_cursor() as dbc:
-            dbc.execute(q.format(','.join(['?'] * len(prefixes_to_remove))), params)
-#        self.db.commit()
+            for i in xrange(0, len(prefixes_to_remove), batch_size):
+                remove_batch = prefixes_to_remove[i:(i+batch_size)]
+                params = [threat_list.threat_type, threat_list.platform_type, threat_list.threat_entry_type] + \
+                                map(sqlite3.Binary, remove_batch)
+                dbc.execute(q.format(','.join(['?'] * len(remove_batch))), params)
 
     def total_cleanup(self):
         "Reset local cache"
