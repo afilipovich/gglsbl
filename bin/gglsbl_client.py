@@ -76,7 +76,7 @@ def main():
             print '%s is blacklisted in %s' % (args.check_url, bl)
         sys.exit(0)
     if args.onetime:
-        sbl = SafeBrowsingList(args.api_key, db_path=args.db_path, discard_fair_use_policy=True)
+        sbl = SafeBrowsingList(args.api_key, db_path=args.db_path, respect_fair_use_policy=False)
         run_sync(sbl)
     else:
         sbl = SafeBrowsingList(args.api_key, db_path=args.db_path)

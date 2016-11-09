@@ -21,36 +21,62 @@ del get_versions
 
 
 class SafeBrowsingApiClient(object):
-    def __init__(self, developerKey, clientId='gglsbl', clientVersion=__version__):
+    def __init__(self, developerKey, clientId='gglsbl', clientVersion=__version__, respect_fair_use_policy=True):
         self.clientId = clientId
         self.clientVersion = clientVersion
+        self.respect_fair_use_policy = respect_fair_use_policy
+        if not self.respect_fair_use_policy:
+            log.warn('Circumventing request frequency throttling is against Safe Browsing API policy.')
         self.service = build('safebrowsing', 'v4', developerKey=developerKey)
+        self.next_request_no_sooner_than = None
+
+    def set_wait_duration(self, minimum_wait_duration):
+        if not self.respect_fair_use_policy:
+            return
+        if minimum_wait_duration is None:
+            self.next_request_no_sooner_than = None
+            return
+        self.next_request_no_sooner_than = time.time() + float(minimum_wait_duration.rstrip('s'))
+
+    def fair_use_delay(self):
+        if self.next_request_no_sooner_than is not None:
+            sleep_for = self.next_request_no_sooner_than - time.time()
+            log.info('Sleeping for {} seconds until next request.'.format(sleep_for))
+            time.sleep(sleep_for)
 
     def get_threats_lists(self):
         """Retrieve all available threat lists
         """
         response = self.service.threatLists().list().execute()
+        self.set_wait_duration(response.get('minimumWaitDuration'))
         return response['threatLists']
 
-    def get_threats_update(self, current_state, threat_list):
-        """Fetch hash prefixes update for given threat list
+    def get_threats_update(self, client_state):
+        """Fetch hash prefixes update for given threat list.
+
+        client_state is a dict which looks like {(threatType, platformType, threatEntryType): clientState}
         """
         request_body = {
                 "client": {
                 "clientId":       self.clientId,
                 "clientVersion":  self.clientVersion,
             },
-            "listUpdateRequests": [{
-                "threatType":      threat_list.threat_type,
-                "platformType":    threat_list.platform_type,
-                "threatEntryType": threat_list.threat_entry_type,
-                "state":           current_state,
-                "constraints": {
-                    "supportedCompressions": ["RAW"]
-                }
-            }]
+            "listUpdateRequests": []
         }
+        for (threat_type, platform_type, threat_entry_type), current_state in client_state.items():
+            request_body['listUpdateRequests'].append(
+                {
+                    "threatType":      threat_type,
+                    "platformType":    platform_type,
+                    "threatEntryType": threat_entry_type,
+                    "state":           current_state,
+                    "constraints": {
+                        "supportedCompressions": ["RAW"]
+                    }
+                }
+            )
         response = self.service.threatListUpdates().fetch(body=request_body).execute()
+        self.set_wait_duration(response.get('minimumWaitDuration'))
         return response['listUpdateResponses']
 
     def get_full_hashes(self, prefixes, client_state):
@@ -82,6 +108,7 @@ class SafeBrowsingApiClient(object):
             if threatEntryType not in request_body['threatInfo']['threatEntryTypes']:
                 request_body['threatInfo']['threatEntryTypes'].append(threatEntryType)
         response = self.service.fullHashes().find(body=request_body).execute()
+        self.set_wait_duration(response.get('minimumWaitDuration'))
         return response
 
 
