@@ -30,6 +30,7 @@ class SafeBrowsingList(object):
 
     def update_hash_prefix_cache(self):
         self.api_client.fair_use_delay()
+        self.storage.cleanup_full_hashes()
         threat_lists = self.api_client.get_threats_lists()
         for entry in threat_lists:
             threat_list = ThreatList.from_api_entry(entry)

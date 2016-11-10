@@ -46,7 +46,7 @@ class SqliteStorage(object):
     def __init__(self, db_path):
         self.db_path = db_path
         do_init_db = not os.path.isfile(db_path)
-        log.info('Opening SQLite DB %s' % db_path)
+        log.info('Opening SQLite DB {}'.format(db_path))
         self.db = sqlite3.connect(db_path)
         if do_init_db:
             log.info('SQLite DB does not exist, initializing')
@@ -152,7 +152,7 @@ class SqliteStorage(object):
                 VALUES
                     (?, ?, ?, ?, ?, current_timestamp)
         '''
-        qu = "UPDATE full_hash SET expires_at=datetime(current_timestamp, '+%d SECONDS') \
+        qu = "UPDATE full_hash SET expires_at=datetime(current_timestamp, '+{} SECONDS') \
             WHERE value=? AND threat_type=? AND platform_type=? AND threat_entry_type=?"
 
         i_parameters = [sqlite3.Binary(hash_value), threat_list.threat_type,
@@ -162,7 +162,7 @@ class SqliteStorage(object):
 
         with self.get_cursor() as dbc:
             dbc.execute(qi, i_parameters)
-            dbc.execute(qu % int(cache_duration), u_parameters)
+            dbc.execute(qu.format(int(cache_duration)), u_parameters)
         self.db.commit()
 
     def delete_hash_prefix_list(self, threat_list):
@@ -174,13 +174,23 @@ class SqliteStorage(object):
             dbc.execute(q, parameters)
         self.db.commit()
 
+    def cleanup_full_hashes(self, keep_expired_for=60*60*12):
+        """Remove long expired full_hash entries.
+        """
+        q = '''DELETE FROM full_hash WHERE expires_at=datetime(current_timestamp, '{} SECONDS')
+        '''
+        log.info('Cleaning up full_hash entries expired more than {} seconds ago.'.format(keep_expired_for))
+        with self.get_cursor() as dbc:
+            dbc.execute(q.format(int(keep_expired_for)))
+        self.db.commit()
+
     def update_hash_prefix_expiration(self, threat_list, prefix_value, negative_cache_duration):
-        q = "UPDATE hash_prefix SET negative_expires_at=datetime(current_timestamp, '+%d SECONDS') \
+        q = "UPDATE hash_prefix SET negative_expires_at=datetime(current_timestamp, '+{} SECONDS') \
             WHERE value=? AND threat_type=? AND platform_type=? AND threat_entry_type=?"
         parameters = [sqlite3.Binary(prefix_value), threat_list.threat_type,
                     threat_list.platform_type, threat_list.threat_entry_type]
         with self.get_cursor() as dbc:
-            dbc.execute(q % int(negative_cache_duration), parameters)
+            dbc.execute(q.format(int(negative_cache_duration)), parameters)
         self.db.commit()
 
     def get_threat_lists(self):
