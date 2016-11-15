@@ -14,7 +14,10 @@ import hashlib
 import socket
 from base64 import b64encode, b64decode
 
-from googleapiclient.discovery import build
+try:
+    from googleapiclient.discovery import build
+except ImportError:
+    from apiclient.discovery import build
 
 import logging
 log = logging.getLogger()

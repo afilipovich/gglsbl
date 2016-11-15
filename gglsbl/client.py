@@ -84,12 +84,12 @@ class SafeBrowsingList(object):
     def lookup_url(self, url):
         "Look up URL in Safe Browsing blacklists"
         url_hashes = URL(url).hashes
-        list_names = self.lookup_hash(url_hashes)
+        list_names = self.lookup_hashes(url_hashes)
         if list_names:
             return list_names
         return None
 
-    def lookup_hash(self, full_hashes):
+    def lookup_hashes(self, full_hashes):
         """Lookup URL hash in blacklists
 
         Returns names of lists it was found in.
