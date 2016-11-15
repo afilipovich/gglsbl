@@ -18,7 +18,7 @@ class SafeBrowsingList(object):
     https://developers.google.com/safe-browsing/v4/
     """
 
-    def __init__(self, api_key, db_path='/tmp/gsb_v3.db', discard_fair_use_policy=False,
+    def __init__(self, api_key, db_path='/tmp/gsb_v4.db', discard_fair_use_policy=False,
                         platforms = ['ALL_PLATFORMS', 'IOS', 'ANDROID']):
         self.api_client = SafeBrowsingApiClient(api_key, discard_fair_use_policy=discard_fair_use_policy)
         self.storage = SqliteStorage(db_path)
