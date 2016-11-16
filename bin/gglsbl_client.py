@@ -1,4 +1,4 @@
-#!/usr/bin/env python2.7
+#!/usr/bin/env python
 
 """Keeps local Google Safe Browsing cache in sync.
 
@@ -27,7 +27,7 @@ def setupArgsParser():
                 required=True,
                 help='Safe Browsing API key [REQUIRED]')
     parser.add_argument('--db-path',
-                default='/tmp/gsb_v3.db',
+                default='/tmp/gsb_v4.db',
                 help='Path to SQLite DB')
     parser.add_argument('--log',
                 default=None,
@@ -71,9 +71,9 @@ def main():
         sbl = SafeBrowsingList(args.api_key, db_path=args.db_path)
         bl = sbl.lookup_url(args.check_url)
         if bl is None:
-            print '%s is not blacklisted' % args.check_url
+            print('{} is not blacklisted'.format(args.check_url))
         else:
-            print '%s is blacklisted in %s' % (args.check_url, bl)
+            print('{} is blacklisted in {}'.format(args.check_url, bl))
         sys.exit(0)
     if args.onetime:
         sbl = SafeBrowsingList(args.api_key, db_path=args.db_path, discard_fair_use_policy=True)

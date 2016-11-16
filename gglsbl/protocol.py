@@ -1,300 +1,123 @@
 #!/usr/bin/env python
 
-import urllib, urllib2, urlparse
+try:
+    import urllib, urlparse
+except ImportError:
+    import urllib.parse as urllib
+    from urllib import parse as urlparse
+
 import struct
 import time
-from StringIO import StringIO
-import random
 import posixpath
 import re
 import hashlib
 import socket
+from base64 import b64encode, b64decode
 
-from . import protobuf_pb2
+try:
+    from googleapiclient.discovery import build
+except ImportError:
+    from apiclient.discovery import build
 
 import logging
 log = logging.getLogger()
 log.addHandler(logging.NullHandler())
 
-class BaseProtocolClient(object):
-    def __init__(self, api_key, discard_fair_use_policy=False):
-        self.config = {
-            "base_url": "https://safebrowsing.google.com/safebrowsing/",
-            "lists": [
-                "goog-malware-shavar",
-                "googpub-phish-shavar",
-                "goog-unwanted-shavar"
-            ],
-            "url_args": {
-                "key": api_key,
-                "appver": "0.1",
-                "pver": "3.0",
-                "client": "api"
-            }
-        }
+from ._version import get_versions
+__version__ = get_versions()['version']
+del get_versions
+
+
+class SafeBrowsingApiClient(object):
+    def __init__(self, developerKey, clientId='gglsbl', clientVersion=__version__, discard_fair_use_policy=True):
+        self.clientId = clientId
+        self.clientVersion = clientVersion
         self.discard_fair_use_policy = discard_fair_use_policy
-        self._next_call_timestamp = 0
-        self._error_count = 0
+        if self.discard_fair_use_policy:
+            log.warn('Circumventing request frequency throttling is against Safe Browsing API policy.')
+        self.service = build('safebrowsing', 'v4', developerKey=developerKey)
+        self.next_request_no_sooner_than = None
 
-    def set_next_call_timeout(self, delay):
-        log.debug('Next query will be delayed %s seconds' % delay)
-        self._next_call_timestamp = int(time.time()) + delay
+    def set_wait_duration(self, minimum_wait_duration):
+        if self.discard_fair_use_policy:
+            return
+        if minimum_wait_duration is None:
+            self.next_request_no_sooner_than = None
+            return
+        self.next_request_no_sooner_than = time.time() + float(minimum_wait_duration.rstrip('s'))
 
     def fair_use_delay(self):
-        "Delay server query according to Request Frequency policy"
-        if self._error_count == 1:
-            delay = 60
-        elif self._error_count > 1:
-            delay = 60 * min(480, random.randint(30, 60) * (2 ** (self._error_count - 2)))
-        else:
-            delay = self._next_call_timestamp - int(time.time())
-        if delay > 0 and not self.discard_fair_use_policy:
-            log.info('Sleeping for %s seconds' % delay)
-            time.sleep(delay)
+        if self.next_request_no_sooner_than is not None:
+            sleep_for = self.next_request_no_sooner_than - time.time()
+            log.info('Sleeping for {} seconds until next request.'.format(sleep_for))
+            time.sleep(sleep_for)
 
-    def apiCall(self, url, payload=None):
-        "Perform a call to Safe Browsing API"
-        if payload is None:
-            payload = ''
-        request = urllib2.Request(url, data=StringIO(payload), headers={'Content-Length': len(payload)})
-        try:
-            response = urllib2.urlopen(request)
-        except urllib2.HTTPError as e:
-            self._error_count += 1
-            raise
-        self._error_count = 0
-        return response.read()
-
-    def mkUrl(self, service):
-        "Generate Safe Browsing API URL"
-        url = urllib.basejoin(self.config['base_url'], service)
-        query_params = '&'.join(['%s=%s' % (k,v) for k,v in self.config['url_args'].items()])
-        url = '%s?%s' % (url, query_params)
-        return url
-
-
-class Chunk(object):
-    "Represents content of Data-response chunk content"
-    def __init__(self, decoded_chunk_data, list_name):
-        self.list_name = list_name
-        self.hashes = []
-        self.chunk_number = None
-        self.chunk_type = None
-        self.prefix_length = None
-        self._loadChunk(decoded_chunk_data)
-
-    def _loadChunk(self, decoded_chunk_data):
-        "Decode hash prefix entries"
-        hash_prefixes = []
-        chunk_type = 'add'
-        prefix_length = 4
-        if decoded_chunk_data.chunk_type == 1:
-            chunk_type = 'sub'
-        if decoded_chunk_data.prefix_type == 1:
-            prefix_length = 32
-        hashes_str = decoded_chunk_data.hashes
-        hashes_count = len(hashes_str) / prefix_length
-        hashes = []
-        for i in xrange(hashes_count):
-            hashes.append(hashes_str[prefix_length*i:prefix_length*(i+1)])
-        self.hashes = hashes
-        self.chunk_number = decoded_chunk_data.chunk_number
-        self.chunk_type = chunk_type
-        self.prefix_length = prefix_length
-
-
-class DataResponse(object):
-    """Contains information on what changes need to be made
-
-    to the local copy of hash prefixes list
-    """
-    def __init__(self, raw_data):
-        self.del_chunks = {'add': {}, 'sub': {}}
-        self.reset_required = False
-        self._parseData(raw_data)
-
-    def _parseData(self, data):
-        lists_data = {}
-        current_list_name = None
-        for l in data:
-            l = l.strip()
-            if not l:
-                continue
-            if l.startswith('i:'):
-                current_list_name = l.strip()[2:]
-                lists_data[current_list_name] = []
-            elif l.startswith('u:'):
-                url = l[2:]
-                if not url.startswith('https://'):
-                    url = 'https://%s' % url
-                lists_data[current_list_name].append(url)
-            elif l.startswith('r:'):
-                self.reset_required = True
-            elif l.startswith('ad:'):
-                chunk_id = l.split(':')[1]
-                if current_list_name not in self.del_chunks['add']:
-                    self.del_chunks['add'][current_list_name] = []
-                self.del_chunks['add'][current_list_name].append(chunk_id)
-            elif l.startswith('sd:'):
-                chunk_id = l.split(':')[1]
-                if current_list_name not in self.del_chunks['sub']:
-                    self.del_chunks['sub'][current_list_name] = []
-                self.del_chunks['sub'][current_list_name].append(chunk_id)
-            else:
-                raise RuntimeError('Response line has unexpected prefix: "%s"' % l)
-        self.lists_data = lists_data
-
-    def _unpackChunks(self, chunkDataFH):
-        "Unroll data chunk containing hash prefixes"
-        decoded_chunks = []
-        while True:
-            packed_size = chunkDataFH.read(4)
-            if len(packed_size) < 4:
-                break
-            size = struct.unpack(">L", packed_size)[0]
-            chunk_data = chunkDataFH.read(size)
-            decoded_chunk = protobuf_pb2.ChunkData()
-            decoded_chunk.ParseFromString(chunk_data)
-            decoded_chunks.append(decoded_chunk)
-        return decoded_chunks
-
-    def _fetchChunks(self, url):
-        "Download chunks of data containing hash prefixes"
-        response = urllib2.urlopen(url)
-        return response
-
-    @property
-    def chunks(self):
-        "Generator iterating through the server respones chunk by chunk"
-        for list_name, chunk_urls in self.lists_data.items():
-            for chunk_url in chunk_urls:
-                packed_chunks = self._fetchChunks(chunk_url)
-                for chunk_data in self._unpackChunks(packed_chunks):
-                    chunk = Chunk(chunk_data, list_name)
-                    yield chunk
-
-
-class PrefixListProtocolClient(BaseProtocolClient):
-    def __init__(self, api_key, discard_fair_use_policy=False):
-        super(PrefixListProtocolClient, self).__init__(api_key, discard_fair_use_policy)
-        self.set_next_call_timeout(random.randint(0, 300))
-
-    def getLists(self):
-        "Get available black/white lists"
-        log.info('Fetching available lists')
-        url = self.mkUrl('list')
-        response = self.apiCall(url)
-        lists = [l.strip() for l in response.split()]
-        return lists
-
-    def _fetchData(self, existing_chunks):
-        "Get references to data chunks containing hash prefixes"
-        self.fair_use_delay()
-        url = self.mkUrl('downloads')
-        payload = []
-        for l in self.config['lists']:
-            list_data = existing_chunks.get(l, {})
-            if not list_data:
-                payload.append('%s;' % l)
-                continue
-            list_data_cmp = []
-            if 'add' in list_data:
-                list_data_cmp.append('a:%s' % list_data['add'])
-            if 'sub' in list_data:
-                list_data_cmp.append('s:%s' % list_data['sub'])
-            payload.append('%s;%s' % (l, ':'.join(list_data_cmp)))
-        payload = '\n'.join(payload) + '\n'
-        response = self.apiCall(url, payload)
-        return response
-
-    def _preparseData(self, data):
-        data = data.split('\n')
-        next_delay = data.pop(0).strip()
-        if not next_delay.startswith('n:'):
-            raise RuntimeError('Expected poll interval as first line, got "%s"', next_delay)
-        self.set_next_call_timeout(int(next_delay[2:]))
-        return data
-
-    def retrieveMissingChunks(self, existing_chunks={}):
-        """Get list of changes from the remote server
-
-        and return them as DataResponse object
+    def get_threats_lists(self):
+        """Retrieve all available threat lists
         """
-        log.info('Retrieving prefixes')
-        raw_data = self._fetchData(existing_chunks)
-        preparsed_data = self._preparseData(raw_data)
-        d = DataResponse(preparsed_data)
-        return d
+        response = self.service.threatLists().list().execute()
+        self.set_wait_duration(response.get('minimumWaitDuration'))
+        return response['threatLists']
 
+    def get_threats_update(self, client_state):
+        """Fetch hash prefixes update for given threat list.
 
-class FullHashProtocolClient(BaseProtocolClient):
-    def fair_use_delay(self):
-        """Throttle queries according to Request Frequency policy
-
-        https://developers.google.com/safe-browsing/developers_guide_v3#RequestFrequency
+        client_state is a dict which looks like {(threatType, platformType, threatEntryType): clientState}
         """
-        if self._error_count > 1:
-            delay = min(120, 30 * (2 ** (self._error_count - 2)))
-        else:
-            delay = self._next_call_timestamp - int(time.time())
-        if delay > 0 and self.respect_fair_use_policy:
-            log.info('Sleeping for %s seconds' % delay)
-            time.sleep(delay)
-
-    def _parseHashEntry(self, hash_entry):
-        "Parse full-sized hash entry"
-        hashes = {}
-        metadata = {}
-        while True:
-            if not hash_entry:
-                break
-            has_metadata = False
-            header, hash_entry = hash_entry.split('\n', 1)
-            opts = header.split(':')
-            if len(opts) == 4:
-                if opts[3] == 'm':
-                    has_metadata = True
-                else:
-                    raise RuntimeError('Failed to parse full hash entry header "%s"' % header)
-            list_name = opts[0]
-            entry_len = int(opts[1])
-            entry_count = int(opts[2])
-            hash_strings = []
-            metadata_strings = []
-            for i in xrange(entry_count):
-                hash_string = hash_entry[entry_len*i:entry_len*(i+1)]
-                hash_strings.append(hash_string)
-            hash_entry =  hash_entry[entry_count * entry_len:]
-            if has_metadata:
-                for i in xrange(entry_count):
-                    next_metadata_len, hash_entry = hash_entry.split('\n', 1)
-                    next_metadata_len = int(next_metadata_len)
-                    metadata_str = hash_entry[:next_metadata_len]
-                    metadata_strings.append(metadata_str)
-                    hash_entry = hash_entry[next_metadata_len:]
-            elif hash_entry:
-                raise RuntimeError('Hash length does not match header declaration (no metadata)')
-            hashes[list_name] = hash_strings
-            metadata[list_name] = metadata_strings
-        return hashes, metadata
-
-    def getHashes(self, hash_prefixes):
-        "Download and parse full-sized hash entries"
-        log.info('Downloading hashes for hash prefixes %s', repr(hash_prefixes))
-        url = self.mkUrl('gethash')
-        prefix_len = len(hash_prefixes[0])
-        hashes_len = prefix_len * len(hash_prefixes)
-        p_header = '%d:%d' % (prefix_len, hashes_len)
-        p_body = ''.join(hash_prefixes)
-        payload = '%s\n%s' % (p_header, p_body)
-        response = self.apiCall(url, payload)
-        first_line, response = response.split('\n', 1)
-        cache_lifetime = int(first_line.strip())
-        hashes, metadata = self._parseHashEntry(response)
-        return {'hashes': hashes,
-                'metadata': metadata,
-                'cache_lifetime': cache_lifetime,
+        request_body = {
+                "client": {
+                "clientId":       self.clientId,
+                "clientVersion":  self.clientVersion,
+            },
+            "listUpdateRequests": []
         }
+        for (threat_type, platform_type, threat_entry_type), current_state in client_state.items():
+            request_body['listUpdateRequests'].append(
+                {
+                    "threatType":      threat_type,
+                    "platformType":    platform_type,
+                    "threatEntryType": threat_entry_type,
+                    "state":           current_state,
+                    "constraints": {
+                        "supportedCompressions": ["RAW"]
+                    }
+                }
+            )
+        response = self.service.threatListUpdates().fetch(body=request_body).execute()
+        self.set_wait_duration(response.get('minimumWaitDuration'))
+        return response['listUpdateResponses']
+
+    def get_full_hashes(self, prefixes, client_state):
+        """Find full hashes matching hash prefixes.
+
+        client_state is a dict which looks like {(threatType, platformType, threatEntryType): clientState}
+        """
+        request_body = {
+          "client": {
+            "clientId":      self.clientId,
+            "clientVersion": self.clientVersion,
+          },
+          "clientStates": [],
+          "threatInfo": {
+            "threatTypes":      [],
+            "platformTypes":    [],
+            "threatEntryTypes": [],
+            "threatEntries": [],
+          }
+        }
+        for prefix in prefixes:
+            request_body['threatInfo']['threatEntries'].append({"hash": b64encode(prefix).decode()})
+        for ((threatType, platformType, threatEntryType), clientState) in client_state.items():
+            request_body['clientStates'].append(clientState)
+            if threatType not in request_body['threatInfo']['threatTypes']:
+                request_body['threatInfo']['threatTypes'].append(threatType)
+            if platformType not in request_body['threatInfo']['platformTypes']:
+                request_body['threatInfo']['platformTypes'].append(platformType)
+            if threatEntryType not in request_body['threatInfo']['threatEntryTypes']:
+                request_body['threatInfo']['threatEntryTypes'].append(threatEntryType)
+        response = self.service.fullHashes().find(body=request_body).execute()
+        self.set_wait_duration(response.get('minimumWaitDuration'))
+        return response
 
 
 class URL(object):
@@ -376,11 +199,10 @@ class URL(object):
             l = min(len(parts),5)
             if l > 4:
                 yield host
-            for i in xrange(l-1):
+            for i in range(l-1):
                 yield '.'.join(parts[i-l:])
         def url_path_permutations(path):
-            if path != '/':
-                yield path
+            yield path
             query = None
             if '?' in path:
                 path, query =  path.split('?', 1)
@@ -388,7 +210,7 @@ class URL(object):
                 yield path
             path_parts = path.split('/')[0:-1]
             curr_path = ''
-            for i in xrange(min(4, len(path_parts))):
+            for i in range(min(4, len(path_parts) )):
                 curr_path = curr_path + path_parts[i] + '/'
                 yield curr_path
         protocol, address_str = urllib.splittype(url)
@@ -396,11 +218,22 @@ class URL(object):
         user, host = urllib.splituser(host)
         host, port = urllib.splitport(host)
         host = host.strip('/')
+        seen_permutations = set()
         for h in url_host_permutations(host):
             for p in url_path_permutations(path):
-                yield '%s%s' % (h, p)
+                u = '%s%s' % (h, p)
+                if u not in seen_permutations:
+                    yield u
+                    seen_permutations.add(u)
 
     @staticmethod
     def digest(url):
         "Hash the URL"
-        return hashlib.sha256(url).digest()
+        return hashlib.sha256(url.encode('utf-8')).digest()
+
+
+if __name__ == '__main__':
+    from pprint import pprint
+    c = SafeBrowsingApiClient('AIzaSyATpqLltciaMve61Wywb5yNDA8D8BvXEn4')
+    r = c.get_threats_lists()
+    pprint(r)
