@@ -1,23 +1,17 @@
 gglsbl
 ======
 
-Python client library for Google Safe Browsing API v3
+Python client library for Google Safe Browsing Update API v4.
 
-Disclaimer
-----------
-While the code was developed according to official
-[Developers Guide](https://developers.google.com/safe-browsing/developers_guide_v3)
-this is **not** a reference implementation. You also may want to check
-[Acceptable Use Policy](https://developers.google.com/safe-browsing/developers_guide_v3#AcceptableUsage)
-for Safe Browsing API
+The code was developed according to official
+[Developers Guide](https://developers.google.com/safe-browsing/v4/update-api), however this is not a reference implementation.
 
 Quick start
 -----------
 
 ###### Get Google API key
-Instructions can be found [here](https://developers.google.com/safe-browsing/lookup_guide#GettingStarted).
-Please note that v3.0 API key is different from v2.2 API.
-Since v4 API is out, v3.0 was renamed to 'Safe Browsing API (Legacy)'.
+Instructions to procure API key can be found [here](https://developers.google.com/safe-browsing/v4/get-started).
+Please note that v3/v4 key is different from v2.2 API. API v3 key may work with current API v4.
 
 ###### Install the library
 
@@ -33,8 +27,6 @@ Since v4 API is out, v3.0 was renamed to 'Safe Browsing API (Legacy)'.
     sbl.update_hash_prefix_cache()
 ```
 
-*On a first run it may take up to several hours to complete the sync*
-
 ###### URL lookup
 
 ```python
@@ -45,23 +37,26 @@ Since v4 API is out, v3.0 was renamed to 'Safe Browsing API (Legacy)'.
 
 CLI Tool
 --------
-*bin/gglsbl_client.py* can be used for quick testing and as a code example.
+*bin/gglsbl_client.py* can be used for a quick check or as a code example.
 
-To sync local cache with Safe Browsing API omitting [Acceptable Use Policy](https://developers.google.com/safe-browsing/developers_guide_v3#AcceptableUsage) delays
+###### To immediately sync local cache with Safe Browsing API. 
 ```
     gglsbl_client.py --api-key 'API KEY GOES HERE' --onetime
 ```
+_Please mind [Request Frequency policy](https://developers.google.com/safe-browsing/v4/request-frequency) if you are going to use this command for more than a one-time test._
 
-To look up URL
+###### To look up URL
 ```
     gglsbl_client.py --api-key 'API KEY GOES HERE' --check-url http://github.com/
 ```
 
-Fore more options please see
+###### Fore more options please see
 ```
     gglsbl_client.py --help
 ```
 
 Running on Python3
 ------------
-There is a [python3 port](https://github.com/Stefan-Code/gglsbl3) of this library maintained by [Stefan](https://github.com/Stefan-Code).
+Current version of library is intended to be compatible with both python2.7 and python3.
+
+If you prefer to use older v3 version of Safe Browsing API there is a [python3 port](https://github.com/Stefan-Code/gglsbl3) of the legacy version made by [Stefan](https://github.com/Stefan-Code).
