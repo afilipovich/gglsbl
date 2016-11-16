@@ -29,13 +29,13 @@ del get_versions
 
 
 class SafeBrowsingApiClient(object):
-    def __init__(self, developerKey, clientId='gglsbl', clientVersion=__version__, discard_fair_use_policy=True):
-        self.clientId = clientId
-        self.clientVersion = clientVersion
+    def __init__(self, developer_key, client_id='python-gglsbl', client_version=__version__, discard_fair_use_policy=True):
+        self.client_id = client_id
+        self.client_version = client_version
         self.discard_fair_use_policy = discard_fair_use_policy
         if self.discard_fair_use_policy:
             log.warn('Circumventing request frequency throttling is against Safe Browsing API policy.')
-        self.service = build('safebrowsing', 'v4', developerKey=developerKey)
+        self.service = build('safebrowsing', 'v4', developerKey=developer_key)
         self.next_request_no_sooner_than = None
 
     def set_wait_duration(self, minimum_wait_duration):
@@ -66,8 +66,8 @@ class SafeBrowsingApiClient(object):
         """
         request_body = {
                 "client": {
-                "clientId":       self.clientId,
-                "clientVersion":  self.clientVersion,
+                "clientId":       self.client_id,
+                "clientVersion":  self.client_version,
             },
             "listUpdateRequests": []
         }
@@ -94,8 +94,8 @@ class SafeBrowsingApiClient(object):
         """
         request_body = {
           "client": {
-            "clientId":      self.clientId,
-            "clientVersion": self.clientVersion,
+            "clientId":      self.client_id,
+            "clientVersion": self.client_version,
           },
           "clientStates": [],
           "threatInfo": {
