@@ -57,6 +57,6 @@ _Please mind [Request Frequency policy](https://developers.google.com/safe-brows
 
 Running on Python3
 ------------
-Current version of library is intended to be compatible with both python2.7 and python3.
+Current version of library is fully compatible with both **python2.7** and **python3**.
 
-If you prefer to use older v3 version of Safe Browsing API there is a [python3 port](https://github.com/Stefan-Code/gglsbl3) of the legacy version made by [Stefan](https://github.com/Stefan-Code).
+_If you prefer to use older v3 version of Safe Browsing API there is a [python3 port](https://github.com/Stefan-Code/gglsbl3) of the legacy version made by [Stefan](https://github.com/Stefan-Code)._
