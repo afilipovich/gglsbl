@@ -12,6 +12,8 @@ log.addHandler(logging.NullHandler())
 from gglsbl.utils import to_hex
 
 class ThreatList(object):
+    """Represents threat list name.
+    """
     def __init__(self, threat_type, platform_type, threat_entry_type):
         self.threat_type = threat_type
         self.platform_type = platform_type
@@ -29,6 +31,8 @@ class ThreatList(object):
 
 
 class HashPrefixList(object):
+    """Wrapper object for threat list data.
+    """
     def __init__(self, prefix_size, raw_hashes):
         self.prefix_size = prefix_size
         self.raw_hashes = raw_hashes

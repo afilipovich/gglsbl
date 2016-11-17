@@ -20,15 +20,25 @@ class SafeBrowsingList(object):
 
     def __init__(self, api_key, db_path='/tmp/gsb_v4.db', discard_fair_use_policy=False,
                         platforms = ['ALL_PLATFORMS', 'IOS', 'ANDROID']):
+        """Constructor.
+
+        Args:
+            api_key: string, a key for API authentication.
+            db_path: string, path to SQLite DB file to store cached data.
+            discard_fair_use_policy: boolean, disable request frequency throttling (only for testing).
+            platforms: list, threat lists to look up, default includes all platforms.
+        """
         self.api_client = SafeBrowsingApiClient(api_key, discard_fair_use_policy=discard_fair_use_policy)
         self.storage = SqliteStorage(db_path)
         self.platforms = platforms
 
-    def verify_threat_list_checksum(self, threat_list, remote_checksum):
+    def _verify_threat_list_checksum(self, threat_list, remote_checksum):
         local_checksum = self.storage.hash_prefix_list_checksum(threat_list)
         return remote_checksum == local_checksum
 
     def update_hash_prefix_cache(self):
+        """Update locally cached threat lists.
+        """
         self.api_client.fair_use_delay()
         self.storage.cleanup_full_hashes()
         threat_lists = self.api_client.get_threats_lists()
@@ -49,14 +59,17 @@ class SafeBrowsingList(object):
                 hash_prefix_list = HashPrefixList(a['rawHashes']['prefixSize'], b64decode(a['rawHashes']['rawHashes']))
                 self.storage.populate_hash_prefix_list(response_threat_list, hash_prefix_list)
             expected_checksum = b64decode(response['checksum']['sha256'])
-            if self.verify_threat_list_checksum(response_threat_list, expected_checksum):
+            if self._verify_threat_list_checksum(response_threat_list, expected_checksum):
                 log.info('Local cache checksum matches the server: {}'.format(to_hex(expected_checksum)))
                 self.storage.update_threat_list_client_state(response_threat_list, response['newClientState'])
             else:
                 raise Exception('Local cache checksum does not match the server: "{}". Consider removing {}'.format(to_hex(expected_checksum), self.storage.db_path))
 
-    def sync_full_hashes(self, hash_prefixes):
-        "Download full hashes matching hash_prefixes. Also update cache expiration timetsamps."
+    def _sync_full_hashes(self, hash_prefixes):
+        """Download full hashes matching hash_prefixes.
+
+        Also update cache expiration timetsamps.
+        """
         threat_lists = self.storage.get_threat_lists()
         client_state = dict([(t.as_tuple(), s) for t,s in threat_lists])
         self.api_client.fair_use_delay()
@@ -82,14 +95,14 @@ class SafeBrowsingList(object):
                 self.storage.update_hash_prefix_expiration(threat_list[0], prefix_value, negative_cache_duration)
 
     def lookup_url(self, url):
-        "Look up URL in Safe Browsing blacklists"
+        """Look up specified URL in Safe Browsing threat lists."""
         url_hashes = URL(url).hashes
-        list_names = self.lookup_hashes(url_hashes)
+        list_names = self._lookup_hashes(url_hashes)
         if list_names:
             return list_names
         return None
 
-    def lookup_hashes(self, full_hashes):
+    def _lookup_hashes(self, full_hashes):
         """Lookup URL hash in blacklists
 
         Returns names of lists it was found in.
@@ -130,7 +143,7 @@ class SafeBrowsingList(object):
 
             # Now we can assume that there are expired matching full hash entries and/or
             # cache prefix entries with expired negative cache. Both require full hash sync.
-            self.sync_full_hashes(matching_prefixes.keys())
+            self._sync_full_hashes(matching_prefixes.keys())
             # Now repeat full hash lookup
             for threat_list, has_expired in self.storage.lookup_full_hashes(matching_full_hashes):
                 if not has_expired:

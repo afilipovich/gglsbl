@@ -4,8 +4,8 @@ __all__ = [
     'SafeBrowsingList'
 ]
 
-from .client import SafeBrowsingList
+from gglsbl.client import SafeBrowsingList
 
-from ._version import get_versions
+from gglsbl._version import get_versions
 __version__ = get_versions()['version']
 del get_versions
