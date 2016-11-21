@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+from functools import wraps
+
 try:
     import urllib, urlparse
 except ImportError:
@@ -12,12 +14,15 @@ import posixpath
 import re
 import hashlib
 import socket
+import random
 from base64 import b64encode, b64decode
 
 try:
     from googleapiclient.discovery import build
+    from googleapiclient.errors import HttpError
 except ImportError:
     from apiclient.discovery import build
+    from apiclient.errors import HttpError
 
 import logging
 log = logging.getLogger()
@@ -26,6 +31,27 @@ log.addHandler(logging.NullHandler())
 from ._version import get_versions
 __version__ = get_versions()['version']
 del get_versions
+
+
+_fail_count = 0
+def autoretry(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        global _fail_count
+        while True:
+            try:
+                r = func(*args, **kwargs)
+                _fail_count = 0
+                return r
+            except HttpError as e:
+                if not (hasattr(e, 'resp') and 'status' in e.resp \
+                        and e.resp['status'].isdigit and int(e.resp['status']) >= 500):
+                    raise # we do not want to retry auth errors etc.
+                _fail_count += 1
+                wait_for = min(2**(_fail_count - 1) * 15 * 60 * (1 + random.random()), 24*60*60)
+                log.exception('Call Failed for {} time(s). Retrying in {} seconds: {}'.format(_fail_count, wait_for, str(e)))
+                time.sleep(wait_for)
+    return wrapper
 
 
 class SafeBrowsingApiClient(object):
@@ -52,6 +78,7 @@ class SafeBrowsingApiClient(object):
             log.info('Sleeping for {} seconds until next request.'.format(sleep_for))
             time.sleep(sleep_for)
 
+    @autoretry
     def get_threats_lists(self):
         """Retrieve all available threat lists
         """
@@ -59,6 +86,7 @@ class SafeBrowsingApiClient(object):
         self.set_wait_duration(response.get('minimumWaitDuration'))
         return response['threatLists']
 
+    @autoretry
     def get_threats_update(self, client_state):
         """Fetch hash prefixes update for given threat list.
 
@@ -87,6 +115,7 @@ class SafeBrowsingApiClient(object):
         self.set_wait_duration(response.get('minimumWaitDuration'))
         return response['listUpdateResponses']
 
+    @autoretry
     def get_full_hashes(self, prefixes, client_state):
         """Find full hashes matching hash prefixes.
 
@@ -118,7 +147,6 @@ class SafeBrowsingApiClient(object):
         response = self.service.fullHashes().find(body=request_body).execute()
         self.set_wait_duration(response.get('minimumWaitDuration'))
         return response
-
 
 class URL(object):
     "URL representation suitable for lookup"
