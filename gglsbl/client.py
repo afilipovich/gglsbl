@@ -19,7 +19,7 @@ class SafeBrowsingList(object):
     """
 
     def __init__(self, api_key, db_path='/tmp/gsb_v4.db', discard_fair_use_policy=False,
-                        platforms = ['ALL_PLATFORMS', 'IOS', 'ANDROID']):
+                        platforms = None):
         """Constructor.
 
         Args:
@@ -44,7 +44,7 @@ class SafeBrowsingList(object):
         threat_lists = self.api_client.get_threats_lists()
         for entry in threat_lists:
             threat_list = ThreatList.from_api_entry(entry)
-            if threat_list.platform_type in self.platforms:
+            if self.platforms is None or threat_list.platform_type in self.platforms:
                 self.storage.add_threat_list(threat_list)
         self.api_client.fair_use_delay()
         threat_lists = self.storage.get_threat_lists()
