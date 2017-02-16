@@ -254,11 +254,9 @@ class SqliteStorage(object):
                     (?, ?, ?, ?, ?, current_timestamp)
         '''
         with self.get_cursor() as dbc:
-            for prefix_value in hash_prefix_list:
-                cue = to_hex(prefix_value[0:4])
-                params = [sqlite3.Binary(prefix_value), cue, threat_list.threat_type,
-                        threat_list.platform_type, threat_list.threat_entry_type]
-                dbc.execute(q, params)
+            records = [[sqlite3.Binary(prefix_value), to_hex(prefix_value[0:4]), threat_list.threat_type,
+                        threat_list.platform_type, threat_list.threat_entry_type] for prefix_value in hash_prefix_list]
+            dbc.executemany(q, records)
         #self.db.commit()
 
     def get_hash_prefix_values_to_remove(self, threat_list, indices):
