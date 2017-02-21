@@ -41,11 +41,23 @@ class SafeBrowsingList(object):
         """
         self.api_client.fair_use_delay()
         self.storage.cleanup_full_hashes()
+        threat_lists_to_remove = dict()
+        for ts, cs in self.storage.get_threat_lists():
+            threat_lists_to_remove[repr(ts)] = ts
         threat_lists = self.api_client.get_threats_lists()
         for entry in threat_lists:
             threat_list = ThreatList.from_api_entry(entry)
             if self.platforms is None or threat_list.platform_type in self.platforms:
                 self.storage.add_threat_list(threat_list)
+                try:
+                    del threat_lists_to_remove[repr(threat_list)]
+                except KeyError:
+                    pass
+        for ts in threat_lists_to_remove.values():
+            self.storage.delete_hash_prefix_list(ts)
+            self.storage.delete_threat_list(ts)
+        del threat_lists_to_remove
+
         self.api_client.fair_use_delay()
         threat_lists = self.storage.get_threat_lists()
         client_state = dict([(t.as_tuple(), s) for t,s in threat_lists])

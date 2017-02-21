@@ -223,6 +223,18 @@ class SqliteStorage(object):
             dbc.execute(q, params)
         self.db.commit()
 
+    def delete_threat_list(self, threat_list):
+        """Delete threat list entry.
+        """
+        log.info('Deleting cached threat list "{}"'.format(repr(threat_list)))
+        q = '''DELETE FROM threat_list
+                    WHERE threat_type=? AND platform_type=? AND threat_entry_type=?
+        '''
+        params = [threat_list.threat_type, threat_list.platform_type, threat_list.threat_entry_type]
+        with self.get_cursor() as dbc:
+            dbc.execute(q, params)
+        self.db.commit()
+
     def update_threat_list_client_state(self, threat_list, client_state):
         log.info('Setting client_state of threat list {} to {}'.format(str(threat_list), client_state))
         q = '''UPDATE threat_list SET timestamp=current_timestamp, client_state=?
