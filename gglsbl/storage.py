@@ -135,7 +135,7 @@ class SqliteStorage(object):
         Returns a tuple of (threat_list, value, negative_cache_expired).
         """
         q = '''SELECT value,threat_type,platform_type,threat_entry_type,
-                    negative_expires_at > current_timestamp AS negative_cache_expired
+                    negative_expires_at < current_timestamp AS negative_cache_expired
                 FROM hash_prefix WHERE cue IN ({})
         '''
         output = []

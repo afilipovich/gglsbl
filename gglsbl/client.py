@@ -149,7 +149,7 @@ class SafeBrowsingList(object):
 
             # If there are no matching expired full hash entries
             # and negative cache is still current for all prefixes, consider it safe
-            if len(matching_expired_threat_lists) == 0 and sum(map(int, matching_prefixes.values())):
+            if len(matching_expired_threat_lists) == 0 and sum(map(int, matching_prefixes.values())) == 0:
                 log.info('Negative cache hit.')
                 return []
 
