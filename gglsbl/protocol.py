@@ -25,7 +25,7 @@ except ImportError:
     from apiclient.errors import HttpError
 
 import logging
-log = logging.getLogger()
+log = logging.getLogger('gglsbl')
 log.addHandler(logging.NullHandler())
 
 from ._version import get_versions

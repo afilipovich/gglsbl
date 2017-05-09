@@ -6,7 +6,7 @@ import contextlib
 import sqlite3
 
 import logging
-log = logging.getLogger()
+log = logging.getLogger('gglsbl')
 log.addHandler(logging.NullHandler())
 
 from gglsbl.utils import to_hex

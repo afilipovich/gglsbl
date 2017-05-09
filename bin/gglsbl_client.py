@@ -16,7 +16,7 @@ import time
 from gglsbl import SafeBrowsingList
 
 import logging
-log = logging.getLogger()
+log = logging.getLogger('gglsbl')
 log.setLevel(logging.DEBUG)
 
 
@@ -50,7 +50,7 @@ def setupLogger(log_file, debug):
     lh = log_file is None and logging.StreamHandler() or logging.FileHandler(log_file)
     lh.setLevel(debug and logging.DEBUG or logging.INFO)
     lh.setFormatter(formatter)
-    log = logging.getLogger()
+    log = logging.getLogger('gglsbl')
     log.addHandler(lh)
 
 def run_sync(sbl):
