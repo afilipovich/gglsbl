@@ -108,6 +108,8 @@ class SafeBrowsingList(object):
 
     def lookup_url(self, url):
         """Look up specified URL in Safe Browsing threat lists."""
+        if type(url) is not str:
+            url = url.encode('utf8')
         url_hashes = URL(url).hashes
         list_names = self._lookup_hashes(url_hashes)
         if list_names:
