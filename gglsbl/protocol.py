@@ -179,7 +179,9 @@ class URL(object):
         url = self.url.strip()
         url = url.replace('\n', '').replace('\r', '').replace('\t', '')
         url = url.split('#', 1)[0]
-        if not (url.startswith('http://') or url.startswith('https://')):
+        if url.startswith('//'):
+            url = 'http:' + url
+        if len(url.split('://')) <= 1:
             url = 'http://' + url
         url = quote(full_unescape(url))
         url_parts = urlparse.urlsplit(url)

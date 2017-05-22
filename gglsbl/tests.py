@@ -24,6 +24,8 @@ class SafeBrowsingListTestCase(unittest.TestCase):
             "http://www.GOOgle.com/": "http://www.google.com/",
             "google.com": "http://google.com/",
             "google.com:443/abc": "http://google.com:443/abc",
+            "//google.com:443/abc": "http://google.com:443/abc",
+            "ftp://google.com:443/abc": "ftp://google.com:443/abc",
             "http://www.google.com.../": "http://www.google.com/",
             "http://www.google.com/foo\tbar\rbaz\n2":"http://www.google.com/foobarbaz2",
             "http://www.google.com/q?": "http://www.google.com/q?",
