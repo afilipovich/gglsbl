@@ -32,7 +32,7 @@ class SafeBrowsingListTestCase(unittest.TestCase):
             "http://evil.com/foo#bar#baz": "http://evil.com/foo",
             "http://evil.com/foo;": "http://evil.com/foo;",
             "http://evil.com/foo?bar;": "http://evil.com/foo?bar;",
-            "http://\x01\x80.com/": "http://%01%80.com/",
+            b"http://\x01\x80.com/": "http://%01%80.com/",
             "http://notrailingslash.com": "http://notrailingslash.com/",
             "http://www.gotaport.com:1234/": "http://www.gotaport.com:1234/",
             "  http://www.google.com/  ": "http://www.google.com/",
