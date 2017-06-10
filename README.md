@@ -55,6 +55,10 @@ _Please mind [Request Frequency policy](https://developers.google.com/safe-brows
     gglsbl_client.py --help
 ```
 
+Running in Distributed Environment
+-------
+For cases when multiple apps and/or servers would benifit from sharing same GSB cache please see [gglsbl-rest](https://github.com/mlsecproject/gglsbl-rest) project maintained by [Alexandre Sieira](https://github.com/asieira).
+
 Running on Python3
 ------------
 Current version of library is fully compatible with both **python2.7** and **python3**.
