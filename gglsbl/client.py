@@ -110,6 +110,8 @@ class SafeBrowsingList(object):
         """Look up specified URL in Safe Browsing threat lists."""
         if type(url) is not str:
             url = url.encode('utf8')
+        if not url.strip():
+            raise ValueError("Empty input string.")
         url_hashes = URL(url).hashes
         list_names = self._lookup_hashes(url_hashes)
         if list_names:
