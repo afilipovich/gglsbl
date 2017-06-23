@@ -32,7 +32,11 @@ Please note that v3/v4 key is different from v2.2 API. API v3 key may work with 
 ```python
     from gglsbl import SafeBrowsingList
     sbl = SafeBrowsingList('API KEY GOES HERE')
-    sbl.lookup_url('http://github.com/')
+    threat_list = sbl.lookup_url('http://github.com/')
+    if threat_list == None:
+      print("no threat')
+    else: 
+      print('threats: ' + str(threat_list))
 ```
 
 CLI Tool
