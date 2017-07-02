@@ -3,6 +3,7 @@
 import os
 import hashlib
 import contextlib
+import pickle
 import sqlite3
 import redis
 
@@ -22,6 +23,8 @@ class ThreatList(object):
 
     @classmethod
     def from_api_entry(cls, entry):
+        """Construct ThreatList from Google API entry.
+        """
         return cls(entry['threatType'], entry['platformType'], entry['threatEntryType'])
 
     def as_tuple(self):
@@ -111,6 +114,9 @@ class SqliteStorage(object):
             )
             dbc.execute(
                 """CREATE INDEX idx_hash_prefix_cue ON hash_prefix (cue)"""
+            )
+            dbc.execute(
+                """CREATE INDEX idx_hash_prefix_list ON hash_prefix (threat_type, platform_type, threat_entry_type)"""
             )
             dbc.execute(
                 """CREATE INDEX idx_full_hash_expires_at ON full_hash (expires_at)"""
@@ -203,16 +209,29 @@ class SqliteStorage(object):
         self.db.commit()
 
     def get_threat_lists(self):
-        """Get a list of known threat lists including clientState values.
+        """Get a list of known threat lists.
         """
-        q = '''SELECT threat_type,platform_type,threat_entry_type,client_state FROM threat_list'''
+        q = '''SELECT threat_type,platform_type,threat_entry_type FROM threat_list'''
         output = []
         with self.get_cursor() as dbc:
             dbc.execute(q)
             for h in dbc.fetchall():
-                threat_type, platform_type, threat_entry_type, client_state = h
+                threat_type, platform_type, threat_entry_type = h
                 threat_list = ThreatList(threat_type, platform_type, threat_entry_type)
-                output.append((threat_list, client_state))
+                output.append(threat_list)
+        return output
+
+    def get_client_state(self):
+        """Get a dict of known threat lists including clientState values.
+        """
+        q = '''SELECT threat_type,platform_type,threat_entry_type,client_state FROM threat_list'''
+        output = {}
+        with self.get_cursor() as dbc:
+            dbc.execute(q)
+            for h in dbc.fetchall():
+                threat_type, platform_type, threat_entry_type, client_state = h
+                threat_list_tuple = (threat_type, platform_type, threat_entry_type)
+                output[threat_list_tuple] = client_state
         return output
 
     def add_threat_list(self, threat_list):
@@ -240,13 +259,14 @@ class SqliteStorage(object):
             dbc.execute(q, params)
         self.db.commit()
 
-    def update_threat_list_client_state(self, threat_list, client_state):
-        log.info('Setting client_state of threat list {} to {}'.format(str(threat_list), client_state))
+    def update_threat_list_client_state(self, client_state):
+        log.info('Setting client_state in Sqlite')
         q = '''UPDATE threat_list SET timestamp=current_timestamp, client_state=?
             WHERE threat_type=? AND platform_type=? AND threat_entry_type=?'''
-        params = [client_state, threat_list.threat_type, threat_list.platform_type, threat_list.threat_entry_type]
         with self.get_cursor() as dbc:
-            dbc.execute(q, params)
+            for threat_list, tl_client_state in client_state.items():
+                params = [tl_client_state, threat_list.threat_type, threat_list.platform_type, threat_list.threat_entry_type]
+                dbc.execute(q, params)
         self.db.commit()
 
     def hash_prefix_list_checksum(self, threat_list):
@@ -333,27 +353,40 @@ class CachedSqliteStorage(SqliteStorage):
         return 'FH_{}_{}_{}'.format(threat_list.redis_key, str(hash_value), str(malware_threat_type))
 
     def store_full_hash(self, threat_list, hash_value, cache_duration, malware_threat_type):
-#        super(CachedSqliteStorage, self).store_full_hash(threat_list, hash_value, cache_duration, malware_threat_type)
-#        redis_key = self._redis_key(threat_list, hash_value, malware_threat_type)
-        self._redis.lpush(str(hash_value), repr(threat_list))
+        self._redis.lpush(str(hash_value), pickle.dumps(threat_list.as_tuple()))
         self._redis.expire(str(hash_value), cache_duration)
 
     def lookup_full_hashes(self, hash_values):
-        # rv = super(CachedSqliteStorage, self).lookup_full_hashes(hash_values)
         rv = []
         for hash_value in hash_values:
             for entry in self._redis.lrange(str(hash_value), 0, -1):
-                rv.append((entry, False))
+                rv.append((ThreatList(*pickle.loads(entry)), False))
         return rv
 
     def lookup_hash_prefix(self, cues):
         rv = super(CachedSqliteStorage, self).lookup_hash_prefix(cues)
         return rv
 
-    def populate_hash_prefix_list(self, threat_list, hash_prefix_list):
-        rv = super(CachedSqliteStorage, self).populate_hash_prefix_list(threat_list, hash_prefix_list)
-        return rv
+    def get_client_state(self):
+        client_state_v = self._redis.get("THREAT_LIST_CLIENT_STATE")
+        if client_state_v:
+            return pickle.loads(client_state_v)
+        log.warning("Threat list client state does not exist in Redis. Copying from Sqlite.")
+        sqlite_client_state = super(CachedSqliteStorage, self).get_client_state()
+        self._redis.set("THREAT_LIST_CLIENT_STATE", pickle.dumps(sqlite_client_state))
+        client_state = self._redis.get("THREAT_LIST_CLIENT_STATE")
+        return pickle.loads(client_state)
+
+    def update_threat_list_client_state(self, client_state):
+        super(CachedSqliteStorage, self).update_threat_list_client_state(client_state)
+        log.info('Updating client state in Redis.')
+        self._redis.set("THREAT_LIST_CLIENT_STATE", pickle.dumps(client_state))
 
     def update_hash_prefix_expiration(self, threat_list, prefix_value, negative_cache_duration):
+        """Update expiration for hash prefixes which match recently fetched full hash.
+        """
         rv = super(CachedSqliteStorage, self).update_hash_prefix_expiration(threat_list, prefix_value, negative_cache_duration)
         return rv
+
+    def populate_hash_prefix_list(self, threat_list, hash_prefix_list):
+        super(CachedSqliteStorage, self).populate_hash_prefix_list(threat_list, hash_prefix_list)
