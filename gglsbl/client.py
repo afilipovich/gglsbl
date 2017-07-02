@@ -8,7 +8,7 @@ log.addHandler(logging.NullHandler())
 
 from gglsbl.utils import to_hex
 from gglsbl.protocol import SafeBrowsingApiClient, URL
-from gglsbl.storage import SqliteStorage, ThreatList, HashPrefixList
+from gglsbl.storage import SqliteStorage, CachedSqliteStorage, ThreatList, HashPrefixList
 
 
 class SafeBrowsingList(object):
@@ -18,18 +18,23 @@ class SafeBrowsingList(object):
     https://developers.google.com/safe-browsing/v4/
     """
 
-    def __init__(self, api_key, db_path='/tmp/gsb_v4.db', discard_fair_use_policy=False,
+    def __init__(self, api_key, db_path='/tmp/gsb_v4.db', redis_host=None, discard_fair_use_policy=False,
                         platforms = None):
         """Constructor.
 
         Args:
             api_key: string, a key for API authentication.
             db_path: string, path to SQLite DB file to store cached data.
+            redis_host: string, use given Redis host as additional common cache.
             discard_fair_use_policy: boolean, disable request frequency throttling (only for testing).
             platforms: list, threat lists to look up, default includes all platforms.
         """
         self.api_client = SafeBrowsingApiClient(api_key, discard_fair_use_policy=discard_fair_use_policy)
-        self.storage = SqliteStorage(db_path)
+        if redis_host is None:
+            self.storage = SqliteStorage(db_path)
+        else:
+            log.info('Using Redis at {} as additional common cache.'.format(redis_host))
+            self.storage = CachedSqliteStorage(db_path, redis_host)
         self.platforms = platforms
 
     def _verify_threat_list_checksum(self, threat_list, remote_checksum):

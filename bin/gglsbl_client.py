@@ -29,6 +29,9 @@ def setupArgsParser():
     parser.add_argument('--db-path',
                 default='/tmp/gsb_v4.db',
                 help='Path to SQLite DB')
+    parser.add_argument('--redis-host',
+                default=None,
+                help='Use redis as additional common cache.')
     parser.add_argument('--log',
                 default=None,
                 help='Path to log file, by default log to STDERR')
@@ -68,7 +71,7 @@ def main():
     args = args_parser.parse_args()
     setupLogger(args.log, args.debug)
     if args.check_url:
-        sbl = SafeBrowsingList(args.api_key, db_path=args.db_path)
+        sbl = SafeBrowsingList(args.api_key, db_path=args.db_path, redis_host=args.redis_host)
         bl = sbl.lookup_url(args.check_url)
         if bl is None:
             print('{} is not blacklisted'.format(args.check_url))
@@ -76,10 +79,10 @@ def main():
             print('{} is blacklisted in {}'.format(args.check_url, bl))
         sys.exit(0)
     if args.onetime:
-        sbl = SafeBrowsingList(args.api_key, db_path=args.db_path, discard_fair_use_policy=True)
+        sbl = SafeBrowsingList(args.api_key, db_path=args.db_path, redis_host=args.redis_host, discard_fair_use_policy=True)
         run_sync(sbl)
     else:
-        sbl = SafeBrowsingList(args.api_key, db_path=args.db_path)
+        sbl = SafeBrowsingList(args.api_key, db_path=args.db_path, redis_host=args.redis_host)
         while True:
             run_sync(sbl)
 

@@ -4,6 +4,7 @@ import os
 import hashlib
 import contextlib
 import sqlite3
+import redis
 
 import logging
 log = logging.getLogger('gglsbl')
@@ -25,6 +26,10 @@ class ThreatList(object):
 
     def as_tuple(self):
         return (self.threat_type, self.platform_type, self.threat_entry_type)
+
+    @property
+    def redis_key(self):
+        return 'THREAT_LIST---' + '--->---'.join(self.as_tuple())
 
     def __repr__(self):
         return '/'.join(self.as_tuple())
@@ -316,3 +321,39 @@ class SqliteStorage(object):
             dbc.execute(q)
         self.db.commit()
         self.init_db()
+
+
+class CachedSqliteStorage(SqliteStorage):
+    def __init__(self, db_path, redis_host):
+        self._redis = redis.StrictRedis(host=redis_host)
+        self._redis.ping()
+        super(CachedSqliteStorage, self).__init__(db_path=db_path)
+
+    def _redis_key(self, threat_list, hash_value, malware_threat_type):
+        return 'FH_{}_{}_{}'.format(threat_list.redis_key, str(hash_value), str(malware_threat_type))
+
+    def store_full_hash(self, threat_list, hash_value, cache_duration, malware_threat_type):
+#        super(CachedSqliteStorage, self).store_full_hash(threat_list, hash_value, cache_duration, malware_threat_type)
+#        redis_key = self._redis_key(threat_list, hash_value, malware_threat_type)
+        self._redis.lpush(str(hash_value), repr(threat_list))
+        self._redis.expire(str(hash_value), cache_duration)
+
+    def lookup_full_hashes(self, hash_values):
+        # rv = super(CachedSqliteStorage, self).lookup_full_hashes(hash_values)
+        rv = []
+        for hash_value in hash_values:
+            for entry in self._redis.lrange(str(hash_value), 0, -1):
+                rv.append((entry, False))
+        return rv
+
+    def lookup_hash_prefix(self, cues):
+        rv = super(CachedSqliteStorage, self).lookup_hash_prefix(cues)
+        return rv
+
+    def populate_hash_prefix_list(self, threat_list, hash_prefix_list):
+        rv = super(CachedSqliteStorage, self).populate_hash_prefix_list(threat_list, hash_prefix_list)
+        return rv
+
+    def update_hash_prefix_expiration(self, threat_list, prefix_value, negative_cache_duration):
+        rv = super(CachedSqliteStorage, self).update_hash_prefix_expiration(threat_list, prefix_value, negative_cache_duration)
+        return rv
