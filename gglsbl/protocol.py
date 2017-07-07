@@ -125,6 +125,7 @@ class SafeBrowsingApiClient(object):
 
         client_state is a dict which looks like {(threatType, platformType, threatEntryType): clientState}
         """
+        log.debug('API query to get full hashes.')
         request_body = {
           "client": {
             "clientId":      self.client_id,

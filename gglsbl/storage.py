@@ -3,6 +3,7 @@
 import os
 import hashlib
 import contextlib
+import pickle
 import sqlite3
 import redis
 
@@ -22,6 +23,8 @@ class ThreatList(object):
 
     @classmethod
     def from_api_entry(cls, entry):
+        """Construct ThreatList from Google API entry.
+        """
         return cls(entry['threatType'], entry['platformType'], entry['threatEntryType'])
 
     def as_tuple(self):
@@ -113,6 +116,9 @@ class SqliteStorage(object):
                 """CREATE INDEX idx_hash_prefix_cue ON hash_prefix (cue)"""
             )
             dbc.execute(
+                """CREATE INDEX idx_hash_prefix_list ON hash_prefix (threat_type, platform_type, threat_entry_type)"""
+            )
+            dbc.execute(
                 """CREATE INDEX idx_full_hash_expires_at ON full_hash (expires_at)"""
             )
             dbc.execute(
@@ -137,19 +143,17 @@ class SqliteStorage(object):
     def lookup_hash_prefix(self, cues):
         """Lookup hash prefixes by cue (first 4 bytes of hash)
 
-        Returns a tuple of (threat_list, value, negative_cache_expired).
+        Returns a tuple of (value, negative_cache_expired).
         """
-        q = '''SELECT value,threat_type,platform_type,threat_entry_type,
-                    negative_expires_at < current_timestamp AS negative_cache_expired
+        q = '''SELECT value,negative_expires_at < current_timestamp AS negative_cache_expired
                 FROM hash_prefix WHERE cue IN ({})
         '''
         output = []
         with self.get_cursor() as dbc:
             dbc.execute(q.format(','.join(['?'] * len(cues))), cues)
             for h in dbc.fetchall():
-                value, threat_type, platform_type, threat_entry_type, negative_cache_expired = h
-                threat_list = ThreatList(threat_type, platform_type, threat_entry_type)
-                output.append((threat_list, bytes(value), negative_cache_expired))
+                value, negative_cache_expired = h
+                output.append((bytes(value), negative_cache_expired))
         return output
 
     def store_full_hash(self, threat_list, hash_value, cache_duration, malware_threat_type):
@@ -193,26 +197,38 @@ class SqliteStorage(object):
             dbc.execute(q.format(int(keep_expired_for)))
         self.db.commit()
 
-    def update_hash_prefix_expiration(self, threat_list, prefix_value, negative_cache_duration):
-        q = "UPDATE hash_prefix SET negative_expires_at=datetime(current_timestamp, '+{} SECONDS') \
-            WHERE value=? AND threat_type=? AND platform_type=? AND threat_entry_type=?"
-        parameters = [sqlite3.Binary(prefix_value), threat_list.threat_type,
-                    threat_list.platform_type, threat_list.threat_entry_type]
+    def update_hash_prefix_expiration(self, prefix_value, negative_cache_duration):
+        q = """UPDATE hash_prefix SET negative_expires_at=datetime(current_timestamp, '+{} SECONDS')
+            WHERE value=?"""
+        parameters = [sqlite3.Binary(prefix_value)]
         with self.get_cursor() as dbc:
             dbc.execute(q.format(int(negative_cache_duration)), parameters)
         self.db.commit()
 
     def get_threat_lists(self):
-        """Get a list of known threat lists including clientState values.
+        """Get a list of known threat lists.
         """
-        q = '''SELECT threat_type,platform_type,threat_entry_type,client_state FROM threat_list'''
+        q = '''SELECT threat_type,platform_type,threat_entry_type FROM threat_list'''
         output = []
         with self.get_cursor() as dbc:
             dbc.execute(q)
             for h in dbc.fetchall():
-                threat_type, platform_type, threat_entry_type, client_state = h
+                threat_type, platform_type, threat_entry_type = h
                 threat_list = ThreatList(threat_type, platform_type, threat_entry_type)
-                output.append((threat_list, client_state))
+                output.append(threat_list)
+        return output
+
+    def get_client_state(self):
+        """Get a dict of known threat lists including clientState values.
+        """
+        q = '''SELECT threat_type,platform_type,threat_entry_type,client_state FROM threat_list'''
+        output = {}
+        with self.get_cursor() as dbc:
+            dbc.execute(q)
+            for h in dbc.fetchall():
+                threat_type, platform_type, threat_entry_type, client_state = h
+                threat_list_tuple = (threat_type, platform_type, threat_entry_type)
+                output[threat_list_tuple] = client_state
         return output
 
     def add_threat_list(self, threat_list):
@@ -240,13 +256,14 @@ class SqliteStorage(object):
             dbc.execute(q, params)
         self.db.commit()
 
-    def update_threat_list_client_state(self, threat_list, client_state):
-        log.info('Setting client_state of threat list {} to {}'.format(str(threat_list), client_state))
+    def update_threat_list_client_state(self, client_state):
+        log.info('Setting client_state in Sqlite')
         q = '''UPDATE threat_list SET timestamp=current_timestamp, client_state=?
             WHERE threat_type=? AND platform_type=? AND threat_entry_type=?'''
-        params = [client_state, threat_list.threat_type, threat_list.platform_type, threat_list.threat_entry_type]
         with self.get_cursor() as dbc:
-            dbc.execute(q, params)
+            for threat_list, tl_client_state in client_state.items():
+                params = [tl_client_state, threat_list.threat_type, threat_list.platform_type, threat_list.threat_entry_type]
+                dbc.execute(q, params)
         self.db.commit()
 
     def hash_prefix_list_checksum(self, threat_list):
@@ -310,6 +327,18 @@ class SqliteStorage(object):
                                 [sqlite3.Binary(b) for b in remove_batch]
                 dbc.execute(q.format(','.join(['?'] * len(remove_batch))), params)
 
+    def dump_hash_prefix_values(self):
+        """Export all hash prefix values.
+
+        Returns a list of known hash prefix values
+        """
+        q = '''SELECT distinct value from hash_prefix'''
+        output = []
+        with self.get_cursor() as dbc:
+            dbc.execute(q)
+            output = [bytes(r[0]) for r in dbc.fetchall()]
+        return output
+
     def total_cleanup(self):
         "Reset local cache"
         with self.get_cursor() as dbc:
@@ -324,36 +353,71 @@ class SqliteStorage(object):
 
 
 class CachedSqliteStorage(SqliteStorage):
+    cue_key = 'HASH_PREFIX_CUES'
+    client_state_key = 'THREAT_LIST_CLIENT_STATE'
+
     def __init__(self, db_path, redis_host):
         self._redis = redis.StrictRedis(host=redis_host)
         self._redis.ping()
         super(CachedSqliteStorage, self).__init__(db_path=db_path)
 
-    def _redis_key(self, threat_list, hash_value, malware_threat_type):
-        return 'FH_{}_{}_{}'.format(threat_list.redis_key, str(hash_value), str(malware_threat_type))
-
     def store_full_hash(self, threat_list, hash_value, cache_duration, malware_threat_type):
-#        super(CachedSqliteStorage, self).store_full_hash(threat_list, hash_value, cache_duration, malware_threat_type)
-#        redis_key = self._redis_key(threat_list, hash_value, malware_threat_type)
-        self._redis.lpush(str(hash_value), repr(threat_list))
-        self._redis.expire(str(hash_value), cache_duration)
+        redis_key = 'FULL_HASH_{}'.format(to_hex(hash_value))
+        self._redis.lpush(redis_key, pickle.dumps(threat_list.as_tuple()))
+        self._redis.expire(redis_key, cache_duration)
 
     def lookup_full_hashes(self, hash_values):
-        # rv = super(CachedSqliteStorage, self).lookup_full_hashes(hash_values)
         rv = []
         for hash_value in hash_values:
-            for entry in self._redis.lrange(str(hash_value), 0, -1):
-                rv.append((entry, False))
+            redis_key = 'FULL_HASH_{}'.format(to_hex(hash_value))
+            for entry in self._redis.lrange(redis_key, 0, -1):
+                rv.append((ThreatList(*pickle.loads(entry)), False))
         return rv
+
+    def get_client_state(self):
+        client_state_v = self._redis.get(self.client_state_key)
+        if client_state_v:
+            return pickle.loads(client_state_v)
+        log.warning("Threat list client state does not exist in Redis. Copying from Sqlite.")
+        sqlite_client_state = super(CachedSqliteStorage, self).get_client_state()
+        self._redis.set(self.client_state_key, pickle.dumps(sqlite_client_state))
+        client_state = self._redis.get(self.client_state_key)
+        return pickle.loads(client_state)
+
+    def update_threat_list_client_state(self, client_state):
+        super(CachedSqliteStorage, self).update_threat_list_client_state(client_state)
+        log.info('Updating client state in Redis.')
+        p = self._redis.pipeline()
+        p.set(self.client_state_key, pickle.dumps(dict([(k.as_tuple(),v) for k,v in client_state.items()])), ex=60*60*24*7)
+        log.info('Copying hash prefix values to Redis')
+        p.delete(self.cue_key)
+        hash_prefix_values = super(CachedSqliteStorage, self).dump_hash_prefix_values()
+        log.info('Filling pipeline')
+        for v in hash_prefix_values:
+            p.hset(self.cue_key, to_hex(v[0:4]), pickle.dumps(v))  ---- same cue may match several prefixes
+        p.expire(self.cue_key, 60*60*24*7)
+        log.info('Executing')
+        p.execute()
+        log.info('Done')
+
+    def update_hash_prefix_expiration(self, prefix_value, negative_cache_duration):
+        """Update expiration for hash prefixes which match recently fetched full hash.
+        """
+        redis_key = "HASH_PREFIX_NEGATIVE_CACHE_{}".format(to_hex(prefix_value))
+        self._redis.set(redis_key, True, ex=negative_cache_duration)
 
     def lookup_hash_prefix(self, cues):
-        rv = super(CachedSqliteStorage, self).lookup_hash_prefix(cues)
-        return rv
+        """Get the list of matching hash prefixes.
 
-    def populate_hash_prefix_list(self, threat_list, hash_prefix_list):
-        rv = super(CachedSqliteStorage, self).populate_hash_prefix_list(threat_list, hash_prefix_list)
-        return rv
-
-    def update_hash_prefix_expiration(self, threat_list, prefix_value, negative_cache_duration):
-        rv = super(CachedSqliteStorage, self).update_hash_prefix_expiration(threat_list, prefix_value, negative_cache_duration)
-        return rv
+        Returns a list of tuples (hash_prefix_value, has_expired)
+        """
+        matching_prefixes = self._redis.hmget(self.cue_key, cues)
+        matching_prefixes = [pickle.loads(m) for m in matching_prefixes if m is not None]
+        if not matching_prefixes:
+            return []
+        output = []
+        for prefix_value in matching_prefixes:
+            redis_key = "HASH_PREFIX_NEGATIVE_CACHE_{}".format(to_hex(prefix_value))
+            negative_cache_expired = not bool(self._redis.get(redis_key))
+            output.append((prefix_value, negative_cache_expired))
+        return output
