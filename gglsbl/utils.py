@@ -6,7 +6,7 @@ def to_hex_2(v):
     return v.encode("hex")
 
 def to_hex_34(v):
-    return codecs.encode(v, "hex")
+    return codecs.encode(v, "hex").decode("utf8")
 
 def to_hex_35(v):
     return v.hex()
