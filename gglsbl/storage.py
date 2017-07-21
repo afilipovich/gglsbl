@@ -100,7 +100,7 @@ class SqliteStorage(object):
             dbc.execute(
             """CREATE TABLE hash_prefix (
                 value BLOB NOT NULL,
-                cue character varying(4) NOT NULL,
+                cue BLOB NOT NULL,
                 threat_type character varying(128) NOT NULL,
                 platform_type character varying(128) NOT NULL,
                 threat_entry_type character varying(128) NOT NULL,
@@ -150,7 +150,7 @@ class SqliteStorage(object):
         '''
         output = []
         with self.get_cursor() as dbc:
-            dbc.execute(q.format(','.join(['?'] * len(cues))), cues)
+            dbc.execute(q.format(','.join(['?'] * len(cues))), [sqlite3.Binary(cue) for cue in cues])
             for h in dbc.fetchall():
                 value, negative_cache_expired = h
                 output.append((bytes(value), negative_cache_expired))
@@ -288,7 +288,7 @@ class SqliteStorage(object):
                     (?, ?, ?, ?, ?, current_timestamp)
         '''
         with self.get_cursor() as dbc:
-            records = [[sqlite3.Binary(prefix_value), to_hex(prefix_value[0:4]), threat_list.threat_type,
+            records = [[sqlite3.Binary(prefix_value), sqlite3.Binary(prefix_value[0:4]), threat_list.threat_type,
                         threat_list.platform_type, threat_list.threat_entry_type] for prefix_value in hash_prefix_list]
             dbc.executemany(q, records)
         #self.db.commit()
@@ -354,6 +354,7 @@ class SqliteStorage(object):
 
 class CachedSqliteStorage(SqliteStorage):
     cue_key = 'HASH_PREFIX_CUES'
+    prefix_key = 'HASH_PREFIXES'
     client_state_key = 'THREAT_LIST_CLIENT_STATE'
 
     def __init__(self, db_path, redis_host):
@@ -391,14 +392,26 @@ class CachedSqliteStorage(SqliteStorage):
         p.set(self.client_state_key, pickle.dumps(dict([(k.as_tuple(),v) for k,v in client_state.items()])), ex=60*60*24*7)
         log.info('Copying hash prefix values to Redis')
         p.delete(self.cue_key)
+        p.delete(self.prefix_key)
         hash_prefix_values = super(CachedSqliteStorage, self).dump_hash_prefix_values()
-        log.info('Filling pipeline')
+        log.info('Filling pipeline with prefixes')
+        long_prefixes = {}
         for v in hash_prefix_values:
-            p.hset(self.cue_key, to_hex(v[0:4]), pickle.dumps(v))  ---- same cue may match several prefixes
+            if len(v) == 4:
+                p.sadd(self.prefix_key, v)
+            else: # same cue may match several prefixes
+                cue = v[0:4]
+                if cue not in long_prefixes:
+                    long_prefixes[cue] = []
+                long_prefixes[cue].append(v)
+        log.info('Filling pipeline with longer prefixes')
+        for cue, prefixes in long_prefixes.items():
+            p.hset(self.cue_key, cue, pickle.dumps(prefixes))
         p.expire(self.cue_key, 60*60*24*7)
-        log.info('Executing')
+        p.expire(self.prefix_key, 60*60*24*7)
+        log.info('Pushing pipeline to Redis')
         p.execute()
-        log.info('Done')
+        log.info('Finished updating hash prefix list.')
 
     def update_hash_prefix_expiration(self, prefix_value, negative_cache_duration):
         """Update expiration for hash prefixes which match recently fetched full hash.
@@ -411,8 +424,10 @@ class CachedSqliteStorage(SqliteStorage):
 
         Returns a list of tuples (hash_prefix_value, has_expired)
         """
-        matching_prefixes = self._redis.hmget(self.cue_key, cues)
-        matching_prefixes = [pickle.loads(m) for m in matching_prefixes if m is not None]
+        matching_prefixes = self._redis.sinter(self.prefix_key, cues)
+        for v in self._redis.hmget(self.cue_key, cues):
+            if v is not None:
+                matching_prefixes.extend(pickle.loads(v))
         if not matching_prefixes:
             return []
         output = []

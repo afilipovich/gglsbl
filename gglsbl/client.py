@@ -132,7 +132,7 @@ class SafeBrowsingList(object):
         Returns names of lists it was found in.
         """
         full_hashes = list(full_hashes)
-        cues = [to_hex(fh[0:4]) for fh in full_hashes]
+        cues = [fh[0:4] for fh in full_hashes]
         result = []
         try:
             matching_prefixes = {}
