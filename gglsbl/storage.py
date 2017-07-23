@@ -439,3 +439,27 @@ class CachedSqliteStorage(SqliteStorage):
             negative_cache_expired = not bool(self._redis.get(redis_key))
             output.append((prefix_value, negative_cache_expired))
         return output
+
+    def get_client_state(self):
+        client_state_v = self._redis.get("THREAT_LIST_CLIENT_STATE")
+        if client_state_v:
+            return pickle.loads(client_state_v)
+        log.warning("Threat list client state does not exist in Redis. Copying from Sqlite.")
+        sqlite_client_state = super(CachedSqliteStorage, self).get_client_state()
+        self._redis.set("THREAT_LIST_CLIENT_STATE", pickle.dumps(sqlite_client_state))
+        client_state = self._redis.get("THREAT_LIST_CLIENT_STATE")
+        return pickle.loads(client_state)
+
+    def update_threat_list_client_state(self, client_state):
+        super(CachedSqliteStorage, self).update_threat_list_client_state(client_state)
+        log.info('Updating client state in Redis.')
+        self._redis.set("THREAT_LIST_CLIENT_STATE", pickle.dumps(client_state))
+
+    def update_hash_prefix_expiration(self, threat_list, prefix_value, negative_cache_duration):
+        """Update expiration for hash prefixes which match recently fetched full hash.
+        """
+        rv = super(CachedSqliteStorage, self).update_hash_prefix_expiration(threat_list, prefix_value, negative_cache_duration)
+        return rv
+
+    def populate_hash_prefix_list(self, threat_list, hash_prefix_list):
+        super(CachedSqliteStorage, self).populate_hash_prefix_list(threat_list, hash_prefix_list)
