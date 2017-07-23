@@ -53,6 +53,8 @@ class HashPrefixList(object):
 
 
 class SqliteStorage(object):
+    schema_version = '1.1'
+
     """Storage abstraction for local GSB cache"""
     def __init__(self, db_path):
         self.db_path = db_path
@@ -62,7 +64,25 @@ class SqliteStorage(object):
         if do_init_db:
             log.info('SQLite DB does not exist, initializing')
             self.init_db()
+        if not self.check_schema_version():
+            log.warning("Cache schema is not compatible with this library version. Re-creating sqlite DB {}".format(db_path))
+            self.db.close()
+            os.unlink(db_path)
+            self.db = sqlite3.connect(db_path)
+            self.init_db()
         self.db.cursor().execute('PRAGMA synchronous = 0')
+
+    def check_schema_version(self):
+        q = "SELECT value FROM metadata WHERE name='schema_version'"
+        v = None
+        with self.get_cursor() as dbc:
+            try:
+                dbc.execute(q)
+                v = dbc.fetchall()[0][0]
+            except sqlite3.OperationalError:
+                log.error('Can not get schema version, it is probably outdated.')
+                return False
+        return v == self.schema_version
 
     @contextlib.contextmanager
     def get_cursor(self):
@@ -74,6 +94,15 @@ class SqliteStorage(object):
 
     def init_db(self):
         with self.get_cursor() as dbc:
+            dbc.execute(
+            """CREATE TABLE metadata (
+                name character varying(128) NOT NULL PRIMARY KEY,
+                value character varying(128) NOT NULL
+                )"""
+            )
+            dbc.execute(
+            """INSERT INTO metadata (name, value) VALUES ('schema_version', '{}')""".format(self.schema_version)
+            )
             dbc.execute(
             """CREATE TABLE threat_list (
                 threat_type character varying(128) NOT NULL,
@@ -350,40 +379,85 @@ class SqliteStorage(object):
         self.db.commit()
         self.init_db()
 
+    def rollback(self):
+        log.info('Rolling back DB transaction.')
+        self.db.rollback()
 
-class CachedSqliteStorage(SqliteStorage):
+
+class RedisStorage(object):
     cue_key = 'HASH_PREFIX_CUES'
     prefix_key = 'HASH_PREFIXES'
     client_state_key = 'THREAT_LIST_CLIENT_STATE'
+    negative_cache_key_tmpl = 'HASH_PREFIX_NEGATIVE_CACHE_{}'
+    full_hash_key_tmpl = 'FULL_HASH_{}'
 
-    def __init__(self, db_path, redis_host):
+    def __init__(self, redis_host):
         import redis # import only if Redis is going to be used
         self._redis = redis.StrictRedis(host=redis_host)
         self._redis.ping()
-        super(CachedSqliteStorage, self).__init__(db_path=db_path)
+
+    def cleanup_full_hashes(self, *args, **kwargs):
+        return # handled by Redis expiration
 
     def store_full_hash(self, threat_list, hash_value, cache_duration, malware_threat_type):
-        redis_key = 'FULL_HASH_{}'.format(to_hex(hash_value))
+        redis_key = self.full_hash_key_tmpl.format(to_hex(hash_value))
         self._redis.lpush(redis_key, pickle.dumps(threat_list.as_tuple()))
         self._redis.expire(redis_key, cache_duration)
 
     def lookup_full_hashes(self, hash_values):
         rv = []
         for hash_value in hash_values:
-            redis_key = 'FULL_HASH_{}'.format(to_hex(hash_value))
+            redis_key = self.full_hash_key_tmpl.format(to_hex(hash_value))
             for entry in self._redis.lrange(redis_key, 0, -1):
                 rv.append((ThreatList(*pickle.loads(entry)), False))
         return rv
+
+    def update_hash_prefix_expiration(self, prefix_value, negative_cache_duration):
+        """Update expiration for hash prefixes which match recently fetched full hash.
+        """
+        redis_key = self.negative_cache_key_tmpl.format(to_hex(prefix_value))
+        self._redis.set(redis_key, True, ex=negative_cache_duration)
+
+    def lookup_hash_prefix(self, cues):
+        """Get the list of matching hash prefixes.
+
+        "cues" contains a list of hash prefixes truncated to first 4 bytes;
+        most hash prefixes are already 4 bytes long.
+
+        Returns a list of tuples (hash_prefix_value, has_expired)
+        """
+        if not self._redis.exists(self.prefix_key):
+            raise RuntimeError('Cannot perform lookup as Redis cache is incomplete.')
+        matching_prefixes = []
+        for cue in set(cues):
+            if self._redis.sismember(self.prefix_key, cue):
+                matching_prefixes.append(cue)
+        for v in self._redis.hmget(self.cue_key, cues):
+            if v is not None:
+                matching_prefixes.extend(pickle.loads(v))
+        if not matching_prefixes:
+            return []
+        output = []
+        for prefix_value in matching_prefixes:
+            redis_key = self.negative_cache_key_tmpl.format(to_hex(prefix_value))
+            negative_cache_expired = not bool(self._redis.get(redis_key))
+            output.append((prefix_value, negative_cache_expired))
+        return output
 
     def get_client_state(self):
         client_state_v = self._redis.get(self.client_state_key)
         if client_state_v:
             return pickle.loads(client_state_v)
-        log.warning("Threat list client state does not exist in Redis. Copying from Sqlite.")
-        sqlite_client_state = super(CachedSqliteStorage, self).get_client_state()
-        self._redis.set(self.client_state_key, pickle.dumps(sqlite_client_state))
-        client_state = self._redis.get(self.client_state_key)
-        return pickle.loads(client_state)
+        raise RuntimeError("Threat list client state does not exist in Redis.")
+
+    def rollback(self):
+        pass
+
+
+class CachedSqliteStorage(RedisStorage, SqliteStorage):
+    def __init__(self, db_path, redis_host):
+        SqliteStorage.__init__(self, db_path)
+        RedisStorage.__init__(self, redis_host)
 
     def update_threat_list_client_state(self, client_state):
         super(CachedSqliteStorage, self).update_threat_list_client_state(client_state)
@@ -413,53 +487,9 @@ class CachedSqliteStorage(SqliteStorage):
         p.execute()
         log.info('Finished updating hash prefix list.')
 
-    def update_hash_prefix_expiration(self, prefix_value, negative_cache_duration):
-        """Update expiration for hash prefixes which match recently fetched full hash.
-        """
-        redis_key = "HASH_PREFIX_NEGATIVE_CACHE_{}".format(to_hex(prefix_value))
-        self._redis.set(redis_key, True, ex=negative_cache_duration)
-
-    def lookup_hash_prefix(self, cues):
-        """Get the list of matching hash prefixes.
-
-        Returns a list of tuples (hash_prefix_value, has_expired)
-        """
-        matching_prefixes = []
-        for cue in set(cues):
-            if self._redis.sismember(self.prefix_key, cue):
-                matching_prefixes.append(cue)
-        for v in self._redis.hmget(self.cue_key, cues):
-            if v is not None:
-                matching_prefixes.extend(pickle.loads(v))
-        if not matching_prefixes:
-            return []
-        output = []
-        for prefix_value in matching_prefixes:
-            redis_key = "HASH_PREFIX_NEGATIVE_CACHE_{}".format(to_hex(prefix_value))
-            negative_cache_expired = not bool(self._redis.get(redis_key))
-            output.append((prefix_value, negative_cache_expired))
-        return output
-
     def get_client_state(self):
-        client_state_v = self._redis.get("THREAT_LIST_CLIENT_STATE")
-        if client_state_v:
-            return pickle.loads(client_state_v)
-        log.warning("Threat list client state does not exist in Redis. Copying from Sqlite.")
-        sqlite_client_state = super(CachedSqliteStorage, self).get_client_state()
-        self._redis.set("THREAT_LIST_CLIENT_STATE", pickle.dumps(sqlite_client_state))
-        client_state = self._redis.get("THREAT_LIST_CLIENT_STATE")
-        return pickle.loads(client_state)
+        # Sqlite is a source of truth and takes priority
+        return SqliteStorage.get_client_state(self)
 
-    def update_threat_list_client_state(self, client_state):
-        super(CachedSqliteStorage, self).update_threat_list_client_state(client_state)
-        log.info('Updating client state in Redis.')
-        self._redis.set("THREAT_LIST_CLIENT_STATE", pickle.dumps(client_state))
-
-    def update_hash_prefix_expiration(self, threat_list, prefix_value, negative_cache_duration):
-        """Update expiration for hash prefixes which match recently fetched full hash.
-        """
-        rv = super(CachedSqliteStorage, self).update_hash_prefix_expiration(threat_list, prefix_value, negative_cache_duration)
-        return rv
-
-    def populate_hash_prefix_list(self, threat_list, hash_prefix_list):
-        super(CachedSqliteStorage, self).populate_hash_prefix_list(threat_list, hash_prefix_list)
+    def rollback(self):
+        return SqliteStorage.rollback(self)

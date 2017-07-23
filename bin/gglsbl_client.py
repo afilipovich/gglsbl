@@ -38,6 +38,10 @@ def setupArgsParser():
     parser.add_argument('--check-url',
                 default=None,
                 help='Check if URL is in black list and exit')
+    parser.add_argument('--redis-only',
+                default=False,
+                action = 'store_true',
+                help='Use only Redis cache (works only for lookups, not cache sync).')
     parser.add_argument('--debug',
                 default=False,
                 action = 'store_true',
@@ -70,8 +74,11 @@ def main():
     args_parser = setupArgsParser()
     args = args_parser.parse_args()
     setupLogger(args.log, args.debug)
+    db_path = args.db_path
+    if args.redis_only:
+        db_path = None
     if args.check_url:
-        sbl = SafeBrowsingList(args.api_key, db_path=args.db_path, redis_host=args.redis_host)
+        sbl = SafeBrowsingList(args.api_key, db_path=db_path, redis_host=args.redis_host)
         bl = sbl.lookup_url(args.check_url)
         if bl is None:
             print('{} is not blacklisted'.format(args.check_url))
@@ -79,10 +86,10 @@ def main():
             print('{} is blacklisted in {}'.format(args.check_url, bl))
         sys.exit(0)
     if args.onetime:
-        sbl = SafeBrowsingList(args.api_key, db_path=args.db_path, redis_host=args.redis_host, discard_fair_use_policy=True)
+        sbl = SafeBrowsingList(args.api_key, db_path=db_path, redis_host=args.redis_host, discard_fair_use_policy=True)
         run_sync(sbl)
     else:
-        sbl = SafeBrowsingList(args.api_key, db_path=args.db_path, redis_host=args.redis_host)
+        sbl = SafeBrowsingList(args.api_key, db_path=db_path, redis_host=args.redis_host)
         while True:
             run_sync(sbl)
 

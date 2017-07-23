@@ -8,7 +8,7 @@ log.addHandler(logging.NullHandler())
 
 from gglsbl.utils import to_hex
 from gglsbl.protocol import SafeBrowsingApiClient, URL
-from gglsbl.storage import SqliteStorage, CachedSqliteStorage, ThreatList, HashPrefixList
+from gglsbl.storage import SqliteStorage, RedisStorage, CachedSqliteStorage, ThreatList, HashPrefixList
 
 
 class SafeBrowsingList(object):
@@ -28,12 +28,24 @@ class SafeBrowsingList(object):
             redis_host: string, use given Redis host as additional common cache.
             discard_fair_use_policy: boolean, disable request frequency throttling (only for testing).
             platforms: list, threat lists to look up, default includes all platforms.
+
+        - If "db_path" is specified, but "redis_host" is not, Sqlite will be used for for everything.
+        - If "redis_host" is specified but "db_path" is not, Redis will be used for lookups,
+          however it needs to be up-to-date.
+        - To keep Redis cache up-to-date, provide both "db_path" and "redis_key" arguments
+          and call update_hash_prefix_cache() method.
         """
         self.api_client = SafeBrowsingApiClient(api_key, discard_fair_use_policy=discard_fair_use_policy)
+        if redis_host is None and db_path is None:
+            raise RuntimeError('"db_path", "redis_host" or both must be specified.')
         if redis_host is None:
+            log.info('Using local Sqlite cache lookups.')
             self.storage = SqliteStorage(db_path)
+        elif db_path is None:
+            log.info('Using only Redis for lookups.')
+            self.storage = RedisStorage(redis_host)
         else:
-            log.info('Using Redis at {} as additional common cache.'.format(redis_host))
+            log.info('Using Sqlite to keep local state and Redis as an additional common cache.')
             self.storage = CachedSqliteStorage(db_path, redis_host)
         self.platforms = platforms
 
@@ -173,6 +185,6 @@ class SafeBrowsingList(object):
                 if not has_expired:
                     result.append(threat_list)
         except:
-            self.storage.db.rollback()
+            self.storage.rollback()
             raise
         return result
