@@ -5,7 +5,6 @@ import hashlib
 import contextlib
 import pickle
 import sqlite3
-import redis
 
 import logging
 log = logging.getLogger('gglsbl')
@@ -145,8 +144,8 @@ class SqliteStorage(object):
 
         Returns a tuple of (value, negative_cache_expired).
         """
-        q = '''SELECT value,negative_expires_at < current_timestamp AS negative_cache_expired
-                FROM hash_prefix WHERE cue IN ({})
+        q = '''SELECT value, MAX(negative_expires_at < current_timestamp) AS negative_cache_expired
+                FROM hash_prefix WHERE cue IN ({}) GROUP BY 1
         '''
         output = []
         with self.get_cursor() as dbc:
@@ -358,6 +357,7 @@ class CachedSqliteStorage(SqliteStorage):
     client_state_key = 'THREAT_LIST_CLIENT_STATE'
 
     def __init__(self, db_path, redis_host):
+        import redis # import only if Redis is going to be used
         self._redis = redis.StrictRedis(host=redis_host)
         self._redis.ping()
         super(CachedSqliteStorage, self).__init__(db_path=db_path)
@@ -424,7 +424,10 @@ class CachedSqliteStorage(SqliteStorage):
 
         Returns a list of tuples (hash_prefix_value, has_expired)
         """
-        matching_prefixes = self._redis.sinter(self.prefix_key, cues)
+        matching_prefixes = []
+        for cue in set(cues):
+            if self._redis.sismember(self.prefix_key, cue):
+                matching_prefixes.append(cue)
         for v in self._redis.hmget(self.cue_key, cues):
             if v is not None:
                 matching_prefixes.extend(pickle.loads(v))
