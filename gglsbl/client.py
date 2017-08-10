@@ -28,6 +28,7 @@ class SafeBrowsingList(object):
             discard_fair_use_policy: boolean, disable request frequency throttling (only for testing).
             platforms: list, threat lists to look up, default includes all platforms.
         """
+
         self.api_client = SafeBrowsingApiClient(api_key, discard_fair_use_policy=discard_fair_use_policy)
         self.storage = SqliteStorage(db_path)
         self.platforms = platforms
@@ -42,7 +43,7 @@ class SafeBrowsingList(object):
         self.api_client.fair_use_delay()
         self.storage.cleanup_full_hashes()
         threat_lists_to_remove = dict()
-        for ts, cs in self.storage.get_threat_lists():
+        for ts in self.storage.get_threat_lists():
             threat_lists_to_remove[repr(ts)] = ts
         threat_lists = self.api_client.get_threats_lists()
         for entry in threat_lists:
@@ -59,8 +60,10 @@ class SafeBrowsingList(object):
         del threat_lists_to_remove
 
         self.api_client.fair_use_delay()
-        threat_lists = self.storage.get_threat_lists()
-        client_state = dict([(t.as_tuple(), s) for t,s in threat_lists])
+        client_state = self.storage.get_client_state()
+
+
+        new_client_state = {}
         for response in self.api_client.get_threats_update(client_state):
             response_threat_list = ThreatList(response['threatType'], response['platformType'], response['threatEntryType'])
             if response['responseType'] == 'FULL_UPDATE':
@@ -73,17 +76,19 @@ class SafeBrowsingList(object):
             expected_checksum = b64decode(response['checksum']['sha256'])
             if self._verify_threat_list_checksum(response_threat_list, expected_checksum):
                 log.info('Local cache checksum matches the server: {}'.format(to_hex(expected_checksum)))
-                self.storage.update_threat_list_client_state(response_threat_list, response['newClientState'])
+                new_client_state[response_threat_list] = response['newClientState']
             else:
                 raise Exception('Local cache checksum does not match the server: "{}". Consider removing {}'.format(to_hex(expected_checksum), self.storage.db_path))
+        self.storage.update_threat_list_client_state(new_client_state)
+
 
     def _sync_full_hashes(self, hash_prefixes):
         """Download full hashes matching hash_prefixes.
 
         Also update cache expiration timetsamps.
         """
-        threat_lists = self.storage.get_threat_lists()
-        client_state = dict([(t.as_tuple(), s) for t,s in threat_lists])
+
+        client_state = self.storage.get_client_state()
         self.api_client.fair_use_delay()
         fh_response = self.api_client.get_full_hashes(hash_prefixes, client_state)
 
@@ -103,8 +108,7 @@ class SafeBrowsingList(object):
 
         negative_cache_duration = int(fh_response['negativeCacheDuration'].rstrip('s'))
         for prefix_value in hash_prefixes:
-            for threat_list in threat_lists:
-                self.storage.update_hash_prefix_expiration(threat_list[0], prefix_value, negative_cache_duration)
+            self.storage.update_hash_prefix_expiration(prefix_value, negative_cache_duration)
 
     def lookup_url(self, url):
         """Look up specified URL in Safe Browsing threat lists."""
@@ -124,14 +128,14 @@ class SafeBrowsingList(object):
         Returns names of lists it was found in.
         """
         full_hashes = list(full_hashes)
-        cues = [to_hex(fh[0:4]) for fh in full_hashes]
+        cues = [fh[0:4] for fh in full_hashes]
         result = []
         try:
             matching_prefixes = {}
             matching_full_hashes = set()
             is_potential_threat = False
             # First lookup hash prefixes which match full URL hash
-            for (threat_list, hash_prefix, negative_cache_expired) in self.storage.lookup_hash_prefix(cues):
+            for (hash_prefix, negative_cache_expired) in self.storage.lookup_hash_prefix(cues):
                 for full_hash in full_hashes:
                     if full_hash.startswith(hash_prefix):
                         is_potential_threat = True
@@ -165,6 +169,6 @@ class SafeBrowsingList(object):
                 if not has_expired:
                     result.append(threat_list)
         except:
-            self.storage.db.rollback()
+            self.storage.rollback()
             raise
         return result
