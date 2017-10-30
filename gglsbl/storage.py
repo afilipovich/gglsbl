@@ -64,6 +64,7 @@ class SqliteStorage(object):
             self.db = sqlite3.connect(db_path)
             self.init_db()
         self.db.cursor().execute('PRAGMA synchronous = 0')
+        self.db.cursor().execute('PRAGMA journal_mode = WAL')
 
     def check_schema_version(self):
         q = "SELECT value FROM metadata WHERE name='schema_version'"
