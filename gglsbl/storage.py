@@ -212,7 +212,7 @@ class SqliteStorage(object):
     def cleanup_full_hashes(self, keep_expired_for=60*60*12):
         """Remove long expired full_hash entries.
         """
-        q = '''DELETE FROM full_hash WHERE expires_at=datetime(current_timestamp, '{} SECONDS')
+        q = '''DELETE FROM full_hash WHERE expires_at < datetime(current_timestamp, '-{} SECONDS')
         '''
         log.info('Cleaning up full_hash entries expired more than {} seconds ago.'.format(keep_expired_for))
         with self.get_cursor() as dbc:
