@@ -23,6 +23,6 @@ setup(name='gglsbl',
     url='https://github.com/afilipovich/gglsbl',
     license='Apache2',
     packages=['gglsbl'],
-    install_requires=['google-api-python-client'],
+    install_requires=['google-api-python-client>=1.4.2,<2'],
     scripts=['bin/gglsbl_client.py'],
 )
