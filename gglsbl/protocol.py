@@ -15,7 +15,7 @@ import re
 import hashlib
 import socket
 import random
-from base64 import b64encode, b64decode
+from base64 import b64encode
 
 try:
     from googleapiclient.discovery import build
@@ -200,7 +200,6 @@ class URL(object):
         path = posixpath.normpath(path).replace('//', '/')
         if has_trailing_slash and path[-1] != '/':
             path = path + '/'
-        user = url_parts.username
         port = url_parts.port
         host = host.strip('.')
         host = re.sub(r'\.+', '.', host).lower()

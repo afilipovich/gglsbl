@@ -9,7 +9,6 @@ https://developers.google.com/safe-browsing/lookup_guide#GettingStarted
 """
 
 import argparse
-import json
 import sys
 import time
 

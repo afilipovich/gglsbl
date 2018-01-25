@@ -3,8 +3,6 @@
 from setuptools import setup
 import versioneer
 
-import sys, os
-
 setup(name='gglsbl',
     version=versioneer.get_version(),
     cmdclass=versioneer.get_cmdclass(),
