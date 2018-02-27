@@ -65,7 +65,7 @@ class SafeBrowsingApiClient(object):
         self.discard_fair_use_policy = discard_fair_use_policy
         if self.discard_fair_use_policy:
             log.warn('Circumventing request frequency throttling is against Safe Browsing API policy.')
-        self.service = build('safebrowsing', 'v4', developerKey=developer_key)
+        self.service = build('safebrowsing', 'v4', developerKey=developer_key, cache_discovery=False)
         self.next_request_no_sooner_than = None
 
     def set_wait_duration(self, minimum_wait_duration):
