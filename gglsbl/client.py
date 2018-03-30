@@ -40,8 +40,18 @@ class SafeBrowsingList(object):
     def update_hash_prefix_cache(self):
         """Update locally cached threat lists.
         """
+        try:
+            self.storage.cleanup_full_hashes()
+            self.storage.commit()
+            self._sync_threat_lists
+            self._sync_hash_prefix_cache()
+            self.storage.commit()
+        except:
+            self.storage.rollback()
+            raise
+
+    def _sync_threat_lists(self):
         self.api_client.fair_use_delay()
-        self.storage.cleanup_full_hashes()
         threat_lists_to_remove = dict()
         for ts in self.storage.get_threat_lists():
             threat_lists_to_remove[repr(ts)] = ts
@@ -59,10 +69,9 @@ class SafeBrowsingList(object):
             self.storage.delete_threat_list(ts)
         del threat_lists_to_remove
 
+    def _sync_hash_prefix_cache(self):
         self.api_client.fair_use_delay()
         client_state = self.storage.get_client_state()
-
-
         new_client_state = {}
         for response in self.api_client.get_threats_update(client_state):
             response_threat_list = ThreatList(response['threatType'], response['platformType'], response['threatEntryType'])
@@ -117,7 +126,12 @@ class SafeBrowsingList(object):
         if not url.strip():
             raise ValueError("Empty input string.")
         url_hashes = URL(url).hashes
-        list_names = self._lookup_hashes(url_hashes)
+        try:
+            list_names = self._lookup_hashes(url_hashes)
+            self.storage.commit()
+        except:
+            self.storage.rollback()
+            raise
         if list_names:
             return list_names
         return None
@@ -130,45 +144,41 @@ class SafeBrowsingList(object):
         full_hashes = list(full_hashes)
         cues = [fh[0:4] for fh in full_hashes]
         result = []
-        try:
-            matching_prefixes = {}
-            matching_full_hashes = set()
-            is_potential_threat = False
-            # First lookup hash prefixes which match full URL hash
-            for (hash_prefix, negative_cache_expired) in self.storage.lookup_hash_prefix(cues):
-                for full_hash in full_hashes:
-                    if full_hash.startswith(hash_prefix):
-                        is_potential_threat = True
-                        # consider hash prefix negative cache as expired if it is expired in at least one threat list
-                        matching_prefixes[hash_prefix] = matching_prefixes.get(hash_prefix, False) or negative_cache_expired
-                        matching_full_hashes.add(full_hash)
-            # if none matches, URL hash is clear
-            if not is_potential_threat:
-                return []
-            # if there is non-expired full hash, URL is blacklisted
-            matching_expired_threat_lists = set()
-            for threat_list, has_expired in self.storage.lookup_full_hashes(matching_full_hashes):
-                if has_expired:
-                    matching_expired_threat_lists.add(threat_list)
-                else:
-                    result.append(threat_list)
-            if result:
-                return result
+        matching_prefixes = {}
+        matching_full_hashes = set()
+        is_potential_threat = False
+        # First lookup hash prefixes which match full URL hash
+        for (hash_prefix, negative_cache_expired) in self.storage.lookup_hash_prefix(cues):
+            for full_hash in full_hashes:
+                if full_hash.startswith(hash_prefix):
+                    is_potential_threat = True
+                    # consider hash prefix negative cache as expired if it is expired in at least one threat list
+                    matching_prefixes[hash_prefix] = matching_prefixes.get(hash_prefix, False) or negative_cache_expired
+                    matching_full_hashes.add(full_hash)
+        # if none matches, URL hash is clear
+        if not is_potential_threat:
+            return []
+        # if there is non-expired full hash, URL is blacklisted
+        matching_expired_threat_lists = set()
+        for threat_list, has_expired in self.storage.lookup_full_hashes(matching_full_hashes):
+            if has_expired:
+                matching_expired_threat_lists.add(threat_list)
+            else:
+                result.append(threat_list)
+        if result:
+            return result
 
-            # If there are no matching expired full hash entries
-            # and negative cache is still current for all prefixes, consider it safe
-            if len(matching_expired_threat_lists) == 0 and sum(map(int, matching_prefixes.values())) == 0:
-                log.info('Negative cache hit.')
-                return []
+        # If there are no matching expired full hash entries
+        # and negative cache is still current for all prefixes, consider it safe
+        if len(matching_expired_threat_lists) == 0 and sum(map(int, matching_prefixes.values())) == 0:
+            log.info('Negative cache hit.')
+            return []
 
-            # Now we can assume that there are expired matching full hash entries and/or
-            # cache prefix entries with expired negative cache. Both require full hash sync.
-            self._sync_full_hashes(matching_prefixes.keys())
-            # Now repeat full hash lookup
-            for threat_list, has_expired in self.storage.lookup_full_hashes(matching_full_hashes):
-                if not has_expired:
-                    result.append(threat_list)
-        except:
-            self.storage.rollback()
-            raise
+        # Now we can assume that there are expired matching full hash entries and/or
+        # cache prefix entries with expired negative cache. Both require full hash sync.
+        self._sync_full_hashes(matching_prefixes.keys())
+        # Now repeat full hash lookup
+        for threat_list, has_expired in self.storage.lookup_full_hashes(matching_full_hashes):
+            if not has_expired:
+                result.append(threat_list)
         return result
