@@ -43,7 +43,7 @@ class SafeBrowsingList(object):
         try:
             self.storage.cleanup_full_hashes()
             self.storage.commit()
-            self._sync_threat_lists
+            self._sync_threat_lists()
             self._sync_hash_prefix_cache()
             self.storage.commit()
         except:
