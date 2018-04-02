@@ -88,6 +88,8 @@ class SqliteStorage(object):
             dbc.close()
 
     def init_db(self):
+        self.db.cursor().execute('PRAGMA synchronous = 0')
+        self.db.cursor().execute('PRAGMA journal_mode = WAL')
         with self.get_cursor() as dbc:
             dbc.execute(
             """CREATE TABLE metadata (
