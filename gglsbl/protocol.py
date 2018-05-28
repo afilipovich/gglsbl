@@ -78,7 +78,7 @@ class SafeBrowsingApiClient(object):
 
     def fair_use_delay(self):
         if self.next_request_no_sooner_than is not None:
-            sleep_for = self.next_request_no_sooner_than - time.time()
+            sleep_for = max(0, self.next_request_no_sooner_than - time.time())
             log.info('Sleeping for {} seconds until next request.'.format(sleep_for))
             time.sleep(sleep_for)
 
