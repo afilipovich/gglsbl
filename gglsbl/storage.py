@@ -361,5 +361,4 @@ class SqliteStorage(object):
         self.db.rollback()
 
     def commit(self):
-        log.info('Committing transaction.')
         self.db.commit()
