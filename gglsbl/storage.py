@@ -12,8 +12,7 @@ log.addHandler(logging.NullHandler())
 from gglsbl.utils import to_hex
 
 class ThreatList(object):
-    """Represents threat list name.
-    """
+    """Represents threat list name."""
     def __init__(self, threat_type, platform_type, threat_entry_type):
         self.threat_type = threat_type
         self.platform_type = platform_type
@@ -31,8 +30,7 @@ class ThreatList(object):
 
 
 class HashPrefixList(object):
-    """Wrapper object for threat list data.
-    """
+    """Wrapper object for threat list data."""
     def __init__(self, prefix_size, raw_hashes):
         self.prefix_size = prefix_size
         self.raw_hashes = raw_hashes
@@ -46,9 +44,9 @@ class HashPrefixList(object):
 
 
 class SqliteStorage(object):
+    """Storage abstraction for local GSB cache"""
     schema_version = '1.1'
 
-    """Storage abstraction for local GSB cache"""
     def __init__(self, db_path, timeout=10):
         self.db_path = db_path
         do_init_db = not os.path.isfile(db_path)
@@ -182,7 +180,7 @@ class SqliteStorage(object):
         return output
 
     def store_full_hash(self, threat_list, hash_value, cache_duration, malware_threat_type):
-        "Store full hash found for the given hash prefix"
+        """Store full hash found for the given hash prefix"""
 
         log.info('Storing full hash {} to list {} with cache duration {}'.format(to_hex(hash_value), str(threat_list), cache_duration))
         qi = '''INSERT OR IGNORE INTO full_hash
@@ -211,8 +209,7 @@ class SqliteStorage(object):
             dbc.execute(q, parameters)
 
     def cleanup_full_hashes(self, keep_expired_for=60*60*12):
-        """Remove long expired full_hash entries.
-        """
+        """Remove long expired full_hash entries."""
         q = '''DELETE FROM full_hash WHERE expires_at < datetime(current_timestamp, '-{} SECONDS')
         '''
         log.info('Cleaning up full_hash entries expired more than {} seconds ago.'.format(keep_expired_for))
@@ -227,8 +224,7 @@ class SqliteStorage(object):
             dbc.execute(q.format(int(negative_cache_duration)), parameters)
 
     def get_threat_lists(self):
-        """Get a list of known threat lists.
-        """
+        """Get a list of known threat lists."""
         q = '''SELECT threat_type,platform_type,threat_entry_type FROM threat_list'''
         output = []
         with self.get_cursor() as dbc:
@@ -240,8 +236,7 @@ class SqliteStorage(object):
         return output
 
     def get_client_state(self):
-        """Get a dict of known threat lists including clientState values.
-        """
+        """Get a dict of known threat lists including clientState values."""
         q = '''SELECT threat_type,platform_type,threat_entry_type,client_state FROM threat_list'''
         output = {}
         with self.get_cursor() as dbc:
@@ -253,8 +248,7 @@ class SqliteStorage(object):
         return output
 
     def add_threat_list(self, threat_list):
-        """Add threat list entry if it does not exist.
-        """
+        """Add threat list entry if it does not exist."""
         q = '''INSERT OR IGNORE INTO threat_list
                     (threat_type, platform_type, threat_entry_type, timestamp)
                 VALUES
@@ -265,8 +259,7 @@ class SqliteStorage(object):
             dbc.execute(q, params)
 
     def delete_threat_list(self, threat_list):
-        """Delete threat list entry.
-        """
+        """Delete threat list entry."""
         log.info('Deleting cached threat list "{}"'.format(repr(threat_list)))
         q = '''DELETE FROM threat_list
                     WHERE threat_type=? AND platform_type=? AND threat_entry_type=?
@@ -284,8 +277,7 @@ class SqliteStorage(object):
             dbc.execute(q, params)
 
     def hash_prefix_list_checksum(self, threat_list):
-        """Returns SHA256 checksum for alphabetically-sorted concatenated list of hash prefixes
-        """
+        """Returns SHA256 checksum for alphabetically-sorted concatenated list of hash prefixes"""
         q = '''SELECT value FROM hash_prefix
                 WHERE threat_type=? AND platform_type=? AND threat_entry_type=?
                 ORDER BY value
@@ -329,8 +321,7 @@ class SqliteStorage(object):
         return values_to_remove
 
     def remove_hash_prefix_indices(self, threat_list, indices):
-        """Remove records matching idices from a lexicographically-sorted local threat list.
-        """
+        """Remove records matching idices from a lexicographically-sorted local threat list."""
         batch_size = 40
         q = '''DELETE FROM hash_prefix
                 WHERE threat_type=? AND platform_type=? AND threat_entry_type=? AND value IN ({})

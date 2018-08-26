@@ -39,8 +39,7 @@ class SafeBrowsingList(object):
         return remote_checksum == local_checksum
 
     def update_hash_prefix_cache(self):
-        """Update locally cached threat lists.
-        """
+        """Update locally cached threat lists."""
         try:
             self.storage.cleanup_full_hashes()
             self.storage.commit()

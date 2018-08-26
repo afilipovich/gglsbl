@@ -84,8 +84,7 @@ class SafeBrowsingApiClient(object):
 
     @autoretry
     def get_threats_lists(self):
-        """Retrieve all available threat lists
-        """
+        """Retrieve all available threat lists"""
         response = self.service.threatLists().list().execute()
         self.set_wait_duration(response.get('minimumWaitDuration'))
         return response['threatLists']
@@ -153,13 +152,13 @@ class SafeBrowsingApiClient(object):
         return response
 
 class URL(object):
-    "URL representation suitable for lookup"
+    """URL representation suitable for lookup"""
     def __init__(self, url):
         self.url = str(url)
 
     @property
     def hashes(self):
-        "Hashes of all possible permutations of the URL in canonical form"
+        """Hashes of all possible permutations of the URL in canonical form"""
         for url_variant in self.url_permutations(self.canonical):
             url_hash = self.digest(url_variant)
             yield url_hash
@@ -225,7 +224,9 @@ class URL(object):
     @staticmethod
     def url_permutations(url):
         """Try all permutations of hostname and path which can be applied
-        to blacklisted URLs"""
+
+        to blacklisted URLs
+        """
         def url_host_permutations(host):
             if re.match(r'\d+\.\d+\.\d+\.\d+', host):
                 yield host
@@ -263,7 +264,7 @@ class URL(object):
 
     @staticmethod
     def digest(url):
-        "Hash the URL"
+        """Hash the URL"""
         return hashlib.sha256(url.encode('utf-8')).digest()
 
 
