@@ -51,7 +51,7 @@ def autoretry(func):
                 wait_for = min(2**(_fail_count - 1) * 15 * 60 * (1 + random.random()), 24*60*60)
                 log.exception('Call Failed for {} time(s). Retrying in {} seconds: {}'.format(_fail_count, wait_for, str(e)))
                 time.sleep(wait_for)
-            except socket.error as e:
+            except socket.error:
                 transient_error_wait = 2
                 log.exception('Socket error, retrying in {} seconds.'.format(transient_error_wait))
                 time.sleep(transient_error_wait)

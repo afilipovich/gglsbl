@@ -42,6 +42,11 @@ def setupArgsParser():
                 default=False,
                 action = 'store_true',
                 help='Run blacklists sync only once with reduced delays')
+    parser.add_argument('--timeout',
+                default=10,
+                type=int,
+                help=('SQLite connection timeout. Default is 10 seconds. Increase if you get'
+                      ' occasional "database is locked" errors'))
     return parser
 
 def setupLogger(log_file, debug):
@@ -67,7 +72,7 @@ def main():
     args = args_parser.parse_args()
     setupLogger(args.log, args.debug)
     if args.check_url:
-        sbl = SafeBrowsingList(args.api_key, db_path=args.db_path)
+        sbl = SafeBrowsingList(args.api_key, db_path=args.db_path, timeout=args.timeout)
         bl = sbl.lookup_url(args.check_url)
         if bl is None:
             print('{} is not blacklisted'.format(args.check_url))
@@ -75,10 +80,10 @@ def main():
             print('{} is blacklisted in {}'.format(args.check_url, bl))
         sys.exit(0)
     if args.onetime:
-        sbl = SafeBrowsingList(args.api_key, db_path=args.db_path, discard_fair_use_policy=True)
+        sbl = SafeBrowsingList(args.api_key, db_path=args.db_path, discard_fair_use_policy=True, timeout=args.timeout)
         run_sync(sbl)
     else:
-        sbl = SafeBrowsingList(args.api_key, db_path=args.db_path)
+        sbl = SafeBrowsingList(args.api_key, db_path=args.db_path, timeout=args.timeout)
         while True:
             run_sync(sbl)
 

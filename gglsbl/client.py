@@ -19,7 +19,7 @@ class SafeBrowsingList(object):
     """
 
     def __init__(self, api_key, db_path='/tmp/gsb_v4.db', discard_fair_use_policy=False,
-                        platforms = None):
+                        platforms=None, timeout=10):
         """Constructor.
 
         Args:
@@ -27,10 +27,11 @@ class SafeBrowsingList(object):
             db_path: string, path to SQLite DB file to store cached data.
             discard_fair_use_policy: boolean, disable request frequency throttling (only for testing).
             platforms: list, threat lists to look up, default includes all platforms.
+            timeout: seconds to wait for Sqlite DB to become unlocked from concurrent WRITE transaction.
         """
 
         self.api_client = SafeBrowsingApiClient(api_key, discard_fair_use_policy=discard_fair_use_policy)
-        self.storage = SqliteStorage(db_path)
+        self.storage = SqliteStorage(db_path, timeout=timeout)
         self.platforms = platforms
 
     def _verify_threat_list_checksum(self, threat_list, remote_checksum):
@@ -44,8 +45,8 @@ class SafeBrowsingList(object):
             self.storage.cleanup_full_hashes()
             self.storage.commit()
             self._sync_threat_lists()
-            self._sync_hash_prefix_cache()
             self.storage.commit()
+            self._sync_hash_prefix_cache()
         except:
             self.storage.rollback()
             raise
@@ -72,7 +73,6 @@ class SafeBrowsingList(object):
     def _sync_hash_prefix_cache(self):
         self.api_client.fair_use_delay()
         client_state = self.storage.get_client_state()
-        new_client_state = {}
         for response in self.api_client.get_threats_update(client_state):
             response_threat_list = ThreatList(response['threatType'], response['platformType'], response['threatEntryType'])
             if response['responseType'] == 'FULL_UPDATE':
@@ -83,12 +83,14 @@ class SafeBrowsingList(object):
                 hash_prefix_list = HashPrefixList(a['rawHashes']['prefixSize'], b64decode(a['rawHashes']['rawHashes']))
                 self.storage.populate_hash_prefix_list(response_threat_list, hash_prefix_list)
             expected_checksum = b64decode(response['checksum']['sha256'])
+            log.info('Verifying threat hash prefix list checksum')
             if self._verify_threat_list_checksum(response_threat_list, expected_checksum):
                 log.info('Local cache checksum matches the server: {}'.format(to_hex(expected_checksum)))
-                new_client_state[response_threat_list] = response['newClientState']
+                self.storage.update_threat_list_client_state(response_threat_list, response['newClientState'])
+                self.storage.commit()
             else:
-                raise Exception('Local cache checksum does not match the server: "{}". Consider removing {}'.format(to_hex(expected_checksum), self.storage.db_path))
-        self.storage.update_threat_list_client_state(new_client_state)
+                raise Exception('Local cache checksum does not match the server: '
+                                '"{}". Consider removing {}'.format(to_hex(expected_checksum), self.storage.db_path))
 
 
     def _sync_full_hashes(self, hash_prefixes):

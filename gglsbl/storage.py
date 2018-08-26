@@ -49,7 +49,7 @@ class SqliteStorage(object):
     schema_version = '1.1'
 
     """Storage abstraction for local GSB cache"""
-    def __init__(self, db_path):
+    def __init__(self, db_path, timeout=10):
         self.db_path = db_path
         do_init_db = not os.path.isfile(db_path)
         log.info('Opening SQLite DB {}'.format(db_path))
@@ -61,7 +61,7 @@ class SqliteStorage(object):
             log.warning("Cache schema is not compatible with this library version. Re-creating sqlite DB {}".format(db_path))
             self.db.close()
             os.unlink(db_path)
-            self.db = sqlite3.connect(db_path)
+            self.db = sqlite3.connect(db_path, timeout)
             self.init_db()
         self.db.cursor().execute('PRAGMA synchronous = 0')
         self.db.cursor().execute('PRAGMA journal_mode = WAL')
@@ -275,14 +275,13 @@ class SqliteStorage(object):
         with self.get_cursor() as dbc:
             dbc.execute(q, params)
 
-    def update_threat_list_client_state(self, client_state):
+    def update_threat_list_client_state(self, threat_list, client_state):
         log.info('Setting client_state in Sqlite')
         q = '''UPDATE threat_list SET timestamp=current_timestamp, client_state=?
             WHERE threat_type=? AND platform_type=? AND threat_entry_type=?'''
         with self.get_cursor() as dbc:
-            for threat_list, tl_client_state in client_state.items():
-                params = [tl_client_state, threat_list.threat_type, threat_list.platform_type, threat_list.threat_entry_type]
-                dbc.execute(q, params)
+            params = [client_state, threat_list.threat_type, threat_list.platform_type, threat_list.threat_entry_type]
+            dbc.execute(q, params)
 
     def hash_prefix_list_checksum(self, threat_list):
         """Returns SHA256 checksum for alphabetically-sorted concatenated list of hash prefixes
