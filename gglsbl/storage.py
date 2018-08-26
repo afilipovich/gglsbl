@@ -53,7 +53,7 @@ class SqliteStorage(object):
         self.db_path = db_path
         do_init_db = not os.path.isfile(db_path)
         log.info('Opening SQLite DB {}'.format(db_path))
-        self.db = sqlite3.connect(db_path)
+        self.db = sqlite3.connect(db_path, timeout)
         if do_init_db:
             log.info('SQLite DB does not exist, initializing')
             self.init_db()
