@@ -95,7 +95,7 @@ class SafeBrowsingList(object):
     def _sync_full_hashes(self, hash_prefixes):
         """Download full hashes matching hash_prefixes.
 
-        Also update cache expiration timetsamps.
+        Also update cache expiration timestamps.
         """
 
         client_state = self.storage.get_client_state()
@@ -104,21 +104,27 @@ class SafeBrowsingList(object):
 
         # update negative cache for each hash prefix
         # store full hash (insert or update) with positive cache bumped up
-        for m in fh_response['matches']:
-            threat_list = ThreatList(m['threatType'], m['platformType'], m['threatEntryType'])
-            hash_value = b64decode(m['threat']['hash'])
-            cache_duration = int(m['cacheDuration'].rstrip('s'))
-            malware_threat_type = None
-            for metadata in m['threatEntryMetadata'].get('entries', []):
-                k = b64decode(metadata['key'])
-                v = b64decode(metadata['value'])
-                if k == 'malware_threat_type':
-                    malware_threat_type = v
-            self.storage.store_full_hash(threat_list, hash_value, cache_duration, malware_threat_type)
+        try:
+            for m in fh_response['matches']:
+                threat_list = ThreatList(m['threatType'], m['platformType'], m['threatEntryType'])
+                hash_value = b64decode(m['threat']['hash'])
+                cache_duration = int(m['cacheDuration'].rstrip('s'))
+                malware_threat_type = None
+                for metadata in m['threatEntryMetadata'].get('entries', []):
+                    k = b64decode(metadata['key'])
+                    v = b64decode(metadata['value'])
+                    if k == 'malware_threat_type':
+                        malware_threat_type = v
+                self.storage.store_full_hash(threat_list, hash_value, cache_duration, malware_threat_type)
+        except KeyError:
+            pass
 
-        negative_cache_duration = int(fh_response['negativeCacheDuration'].rstrip('s'))
-        for prefix_value in hash_prefixes:
-            self.storage.update_hash_prefix_expiration(prefix_value, negative_cache_duration)
+        try:
+            negative_cache_duration = int(fh_response['negativeCacheDuration'].rstrip('s'))
+            for prefix_value in hash_prefixes:
+                self.storage.update_hash_prefix_expiration(prefix_value, negative_cache_duration)
+        except KeyError:
+            pass
 
     def lookup_url(self, url):
         """Look up specified URL in Safe Browsing threat lists."""
