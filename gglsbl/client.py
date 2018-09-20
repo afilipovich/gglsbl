@@ -95,7 +95,7 @@ class SafeBrowsingList(object):
     def _sync_full_hashes(self, hash_prefixes):
         """Download full hashes matching hash_prefixes.
 
-        Also update cache expiration timetsamps.
+        Also update cache expiration timestamps.
         """
 
         client_state = self.storage.get_client_state()
@@ -104,7 +104,7 @@ class SafeBrowsingList(object):
 
         # update negative cache for each hash prefix
         # store full hash (insert or update) with positive cache bumped up
-        for m in fh_response['matches']:
+        for m in fh_response.get('matches', []):
             threat_list = ThreatList(m['threatType'], m['platformType'], m['threatEntryType'])
             hash_value = b64decode(m['threat']['hash'])
             cache_duration = int(m['cacheDuration'].rstrip('s'))
