@@ -1,11 +1,12 @@
 
+import binascii
 import sys
 
 def to_hex_2(v):
     return v.encode("hex")
 
 def to_hex_3(v):
-    return v.hex()
+    return binascii.hexlify(v)
 
 global to_hex
 
