@@ -4,16 +4,20 @@ import os
 import hashlib
 import contextlib
 import sqlite3
-
 import logging
-log = logging.getLogger('gglsbl')
-log.addHandler(logging.NullHandler())
 
 from gglsbl.utils import to_hex
 
+
+log = logging.getLogger('gglsbl')
+log.addHandler(logging.NullHandler())
+
+
 class ThreatList(object):
     """Represents threat list name."""
+
     def __init__(self, threat_type, platform_type, threat_entry_type):
+        """Constructor."""
         self.threat_type = threat_type
         self.platform_type = platform_type
         self.threat_entry_type = threat_entry_type
@@ -26,28 +30,43 @@ class ThreatList(object):
         return (self.threat_type, self.platform_type, self.threat_entry_type)
 
     def __repr__(self):
+        """String representation of object"""
         return '/'.join(self.as_tuple())
 
 
 class HashPrefixList(object):
     """Wrapper object for threat list data."""
+
     def __init__(self, prefix_size, raw_hashes):
+        """Constructor.
+
+        :param prefix_size: size of hash prefix in bytes (typically 4, sometimes 6)
+        :param raw_hashes: string consisting of concatenated hash prefixes.
+        """
         self.prefix_size = prefix_size
         self.raw_hashes = raw_hashes
 
     def __len__(self):
+        """Number of individual hash prefixes in the list."""
         return int(len(self.raw_hashes) / self.prefix_size)
 
     def __iter__(self):
+        """Iterate through concatenated raw hashes."""
         n = self.prefix_size
-        return (self.raw_hashes[i:i+n] for i in range(0, len(self.raw_hashes), n))
+        return (self.raw_hashes[i:i + n] for i in range(0, len(self.raw_hashes), n))
 
 
 class SqliteStorage(object):
-    """Storage abstraction for local GSB cache"""
+    """Storage abstraction for local GSB cache."""
+
     schema_version = '1.1'
 
     def __init__(self, db_path, timeout=10):
+        """Constructor.
+
+        :param db_path: path to Sqlite DB file
+        :timeout: Sqlite lock wait timeout in seconds
+        """
         self.db_path = db_path
         do_init_db = not os.path.isfile(db_path)
         log.info('Opening SQLite DB {}'.format(db_path))
@@ -56,7 +75,7 @@ class SqliteStorage(object):
             log.info('SQLite DB does not exist, initializing')
             self.init_db()
         if not self.check_schema_version():
-            log.warning("Cache schema is not compatible with this library version. Re-creating sqlite DB {}".format(db_path))
+            log.warning("Cache schema is not compatible with this library version. Re-creating sqlite DB %s", db_path)
             self.db.close()
             os.unlink(db_path)
             self.db = sqlite3.connect(db_path, timeout)
@@ -90,16 +109,16 @@ class SqliteStorage(object):
         self.db.cursor().execute('PRAGMA journal_mode = WAL')
         with self.get_cursor() as dbc:
             dbc.execute(
-            """CREATE TABLE metadata (
+                """CREATE TABLE metadata (
                 name character varying(128) NOT NULL PRIMARY KEY,
                 value character varying(128) NOT NULL
                 )"""
             )
             dbc.execute(
-            """INSERT INTO metadata (name, value) VALUES ('schema_version', '{}')""".format(self.schema_version)
+                """INSERT INTO metadata (name, value) VALUES ('schema_version', '{}')""".format(self.schema_version)
             )
             dbc.execute(
-            """CREATE TABLE threat_list (
+                """CREATE TABLE threat_list (
                 threat_type character varying(128) NOT NULL,
                 platform_type character varying(128) NOT NULL,
                 threat_entry_type character varying(128) NOT NULL,
@@ -109,7 +128,7 @@ class SqliteStorage(object):
                 )"""
             )
             dbc.execute(
-            """CREATE TABLE full_hash (
+                """CREATE TABLE full_hash (
                 value BLOB NOT NULL,
                 threat_type character varying(128) NOT NULL,
                 platform_type character varying(128) NOT NULL,
@@ -121,7 +140,7 @@ class SqliteStorage(object):
                 )"""
             )
             dbc.execute(
-            """CREATE TABLE hash_prefix (
+                """CREATE TABLE hash_prefix (
                 value BLOB NOT NULL,
                 cue BLOB NOT NULL,
                 threat_type character varying(128) NOT NULL,
@@ -133,7 +152,8 @@ class SqliteStorage(object):
                 FOREIGN KEY(threat_type, platform_type, threat_entry_type)
                     REFERENCES threat_list(threat_type, platform_type, threat_entry_type)
                     ON DELETE CASCADE
-                )"""
+                )
+                """
             )
             dbc.execute(
                 """CREATE INDEX idx_hash_prefix_cue ON hash_prefix (cue)"""
@@ -150,13 +170,14 @@ class SqliteStorage(object):
         self.db.commit()
 
     def lookup_full_hashes(self, hash_values):
-        "Query DB to see if hash is blacklisted"
+        """Query DB to see if hash is blacklisted"""
         q = '''SELECT threat_type,platform_type,threat_entry_type, expires_at < current_timestamp AS has_expired
                 FROM full_hash WHERE value IN ({})
         '''
         output = []
         with self.get_cursor() as dbc:
-            dbc.execute(q.format(','.join(['?']*len(hash_values))), [sqlite3.Binary(hv) for hv in hash_values])
+            placeholders = ','.join(['?'] * len(hash_values))
+            dbc.execute(q.format(placeholders), [sqlite3.Binary(hv) for hv in hash_values])
             for h in dbc.fetchall():
                 threat_type, platform_type, threat_entry_type, has_expired = h
                 threat_list = ThreatList(threat_type, platform_type, threat_entry_type)
@@ -181,8 +202,8 @@ class SqliteStorage(object):
 
     def store_full_hash(self, threat_list, hash_value, cache_duration, malware_threat_type):
         """Store full hash found for the given hash prefix"""
-
-        log.info('Storing full hash {} to list {} with cache duration {}'.format(to_hex(hash_value), str(threat_list), cache_duration))
+        log.info('Storing full hash %s to list %s with cache duration %s',
+                 to_hex(hash_value), str(threat_list), cache_duration)
         qi = '''INSERT OR IGNORE INTO full_hash
                     (value, threat_type, platform_type, threat_entry_type, malware_threat_type, downloaded_at)
                 VALUES
@@ -192,9 +213,9 @@ class SqliteStorage(object):
             WHERE value=? AND threat_type=? AND platform_type=? AND threat_entry_type=?"
 
         i_parameters = [sqlite3.Binary(hash_value), threat_list.threat_type,
-                    threat_list.platform_type, threat_list.threat_entry_type, malware_threat_type]
+                        threat_list.platform_type, threat_list.threat_entry_type, malware_threat_type]
         u_parameters = [sqlite3.Binary(hash_value), threat_list.threat_type,
-                    threat_list.platform_type, threat_list.threat_entry_type]
+                        threat_list.platform_type, threat_list.threat_entry_type]
 
         with self.get_cursor() as dbc:
             dbc.execute(qi, i_parameters)
@@ -208,7 +229,7 @@ class SqliteStorage(object):
         with self.get_cursor() as dbc:
             dbc.execute(q, parameters)
 
-    def cleanup_full_hashes(self, keep_expired_for=60*60*12):
+    def cleanup_full_hashes(self, keep_expired_for=(60 * 60 * 12)):
         """Remove long expired full_hash entries."""
         q = '''DELETE FROM full_hash WHERE expires_at < datetime(current_timestamp, '-{} SECONDS')
         '''
@@ -285,7 +306,7 @@ class SqliteStorage(object):
         params = [threat_list.threat_type, threat_list.platform_type, threat_list.threat_entry_type]
         with self.get_cursor() as dbc:
             dbc.execute(q, params)
-            all_hashes = b''.join([ bytes(h[0]) for h in dbc.fetchall() ])
+            all_hashes = b''.join(bytes(h[0]) for h in dbc.fetchall())
             checksum = hashlib.sha256(all_hashes).digest()
         return checksum
 
@@ -329,9 +350,12 @@ class SqliteStorage(object):
         prefixes_to_remove = self.get_hash_prefix_values_to_remove(threat_list, indices)
         with self.get_cursor() as dbc:
             for i in range(0, len(prefixes_to_remove), batch_size):
-                remove_batch = prefixes_to_remove[i:(i+batch_size)]
-                params = [threat_list.threat_type, threat_list.platform_type, threat_list.threat_entry_type] + \
-                                [sqlite3.Binary(b) for b in remove_batch]
+                remove_batch = prefixes_to_remove[i:(i + batch_size)]
+                params = [
+                    threat_list.threat_type,
+                    threat_list.platform_type,
+                    threat_list.threat_entry_type
+                ] + [sqlite3.Binary(b) for b in remove_batch]
                 dbc.execute(q.format(','.join(['?'] * len(remove_batch))), params)
 
     def dump_hash_prefix_values(self):

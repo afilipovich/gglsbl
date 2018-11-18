@@ -3,12 +3,14 @@
 from base64 import b64decode
 
 import logging
-log = logging.getLogger('gglsbl')
-log.addHandler(logging.NullHandler())
 
 from gglsbl.utils import to_hex
 from gglsbl.protocol import SafeBrowsingApiClient, URL
 from gglsbl.storage import SqliteStorage, ThreatList, HashPrefixList
+
+
+log = logging.getLogger('gglsbl')
+log.addHandler(logging.NullHandler())
 
 
 class SafeBrowsingList(object):
@@ -18,8 +20,8 @@ class SafeBrowsingList(object):
     https://developers.google.com/safe-browsing/v4/
     """
 
-    def __init__(self, api_key, db_path='/tmp/gsb_v4.db', discard_fair_use_policy=False,
-                        platforms=None, timeout=10):
+    def __init__(self, api_key, db_path='/tmp/gsb_v4.db',
+                 discard_fair_use_policy=False, platforms=None, timeout=10):
         """Constructor.
 
         Args:
@@ -29,7 +31,6 @@ class SafeBrowsingList(object):
             platforms: list, threat lists to look up, default includes all platforms.
             timeout: seconds to wait for Sqlite DB to become unlocked from concurrent WRITE transaction.
         """
-
         self.api_client = SafeBrowsingApiClient(api_key, discard_fair_use_policy=discard_fair_use_policy)
         self.storage = SqliteStorage(db_path, timeout=timeout)
         self.platforms = platforms
@@ -46,7 +47,7 @@ class SafeBrowsingList(object):
             self._sync_threat_lists()
             self.storage.commit()
             self._sync_hash_prefix_cache()
-        except:
+        except Exception:
             self.storage.rollback()
             raise
 
@@ -73,7 +74,8 @@ class SafeBrowsingList(object):
         self.api_client.fair_use_delay()
         client_state = self.storage.get_client_state()
         for response in self.api_client.get_threats_update(client_state):
-            response_threat_list = ThreatList(response['threatType'], response['platformType'], response['threatEntryType'])
+            response_threat_list = ThreatList(response['threatType'], response['platformType'],
+                                              response['threatEntryType'])
             if response['responseType'] == 'FULL_UPDATE':
                 self.storage.delete_hash_prefix_list(response_threat_list)
             for r in response.get('removals', []):
@@ -91,13 +93,11 @@ class SafeBrowsingList(object):
                 raise Exception('Local cache checksum does not match the server: '
                                 '"{}". Consider removing {}'.format(to_hex(expected_checksum), self.storage.db_path))
 
-
     def _sync_full_hashes(self, hash_prefixes):
         """Download full hashes matching hash_prefixes.
 
         Also update cache expiration timestamps.
         """
-
         client_state = self.storage.get_client_state()
         self.api_client.fair_use_delay()
         fh_response = self.api_client.get_full_hashes(hash_prefixes, client_state)
@@ -130,7 +130,7 @@ class SafeBrowsingList(object):
         try:
             list_names = self._lookup_hashes(url_hashes)
             self.storage.commit()
-        except:
+        except Exception:
             self.storage.rollback()
             raise
         if list_names:

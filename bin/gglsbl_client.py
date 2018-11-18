@@ -22,32 +22,33 @@ log.setLevel(logging.DEBUG)
 def setupArgsParser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--api-key',
-                default=None,
-                required=True,
-                help='Safe Browsing API key [REQUIRED]')
+                        default=None,
+                        required=True,
+                        help='Safe Browsing API key [REQUIRED]')
     parser.add_argument('--db-path',
-                default='/tmp/gsb_v4.db',
-                help='Path to SQLite DB')
+                        default='/tmp/gsb_v4.db',
+                        help='Path to SQLite DB')
     parser.add_argument('--log',
-                default=None,
-                help='Path to log file, by default log to STDERR')
+                        default=None,
+                        help='Path to log file, by default log to STDERR')
     parser.add_argument('--check-url',
-                default=None,
-                help='Check if URL is in black list and exit')
+                        default=None,
+                        help='Check if URL is in black list and exit')
     parser.add_argument('--debug',
-                default=False,
-                action = 'store_true',
-                help='Show debug output')
+                        default=False,
+                        action='store_true',
+                        help='Show debug output')
     parser.add_argument('--onetime',
-                default=False,
-                action = 'store_true',
-                help='Run blacklists sync only once with reduced delays')
+                        default=False,
+                        action='store_true',
+                        help='Run blacklists sync only once with reduced delays')
     parser.add_argument('--timeout',
-                default=10,
-                type=int,
-                help=('SQLite connection timeout. Default is 10 seconds. Increase if you get'
-                      ' occasional "database is locked" errors'))
+                        default=10,
+                        type=int,
+                        help=('SQLite connection timeout. Default is 10 seconds. Increase if you get'
+                              ' occasional "database is locked" errors'))
     return parser
+
 
 def setupLogger(log_file, debug):
     formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
@@ -57,15 +58,17 @@ def setupLogger(log_file, debug):
     log = logging.getLogger('gglsbl')
     log.addHandler(lh)
 
+
 def run_sync(sbl):
     try:
         sbl.update_hash_prefix_cache()
     except (KeyboardInterrupt, SystemExit):
         log.info('Shutting down')
         sys.exit(0)
-    except:
+    except Exception:
         log.exception('Failed to synchronize with GSB service')
         time.sleep(3)
+
 
 def main():
     args_parser = setupArgsParser()
@@ -87,6 +90,6 @@ def main():
         while True:
             run_sync(sbl)
 
+
 if __name__ == '__main__':
     main()
-
