@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+import sys
+import codecs
 from functools import wraps
 
 try:
@@ -153,8 +155,17 @@ class SafeBrowsingApiClient(object):
 
 class URL(object):
     """URL representation suitable for lookup"""
+
+    __py3 = (sys.version_info > (3, 0))
+
     def __init__(self, url):
-        self.url = str(url)
+        if self.__py3:
+            if type(url) is bytes:
+                self.url = bytes(url)
+            else:
+                self.url = url.encode()
+        else:
+            self.url = str(url)
 
     @property
     def hashes(self):
@@ -172,42 +183,59 @@ class URL(object):
                 return uu
             else:
                 return full_unescape(uu)
+        def full_unescape_to_bytes(u):
+            uu = urlparse.unquote_to_bytes(u)
+            if uu == u:
+                return uu
+            else:
+                return full_unescape_to_bytes(uu)
         def quote(s):
             safe_chars = '!"$&\'()*+,-./:;<=>?@[\\]^_`{|}~'
             return urllib.quote(s, safe=safe_chars)
         url = self.url.strip()
-        url = url.replace('\n', '').replace('\r', '').replace('\t', '')
-        url = url.split('#', 1)[0]
-        if url.startswith('//'):
-            url = 'http:' + url
-        if len(url.split('://')) <= 1:
-            url = 'http://' + url
-        url = quote(full_unescape(url))
+        url = url.replace(b'\n', b'').replace(b'\r', b'').replace(b'\t', b'')
+        url = url.split(b'#', 1)[0]
+        if url.startswith(b'//'):
+            url = b'http:' + url
+        if len(url.split(b'://')) <= 1:
+            url = b'http://' + url
+        # at python3 work with bytes instead of string
+        # as URL may contain invalid unicode characters
+        if self.__py3 and type(url) is bytes:
+            url = quote(full_unescape_to_bytes(url))
+        else:
+            url = quote(full_unescape(url))
         url_parts = urlparse.urlsplit(url)
         if not url_parts[0]:
             url = 'http://%s' % url
             url_parts = urlparse.urlsplit(url)
         protocol = url_parts.scheme
-        host = full_unescape(url_parts.hostname)
-        path = full_unescape(url_parts.path)
+        if self.__py3:
+            host = full_unescape_to_bytes(url_parts.hostname)
+            path = full_unescape_to_bytes(url_parts.path)
+        else:
+            host = full_unescape(url_parts.hostname)
+            path = full_unescape(url_parts.path)
         query = url_parts.query
         if not query and '?' not in url:
             query = None
         if not path:
-            path = '/'
-        has_trailing_slash = (path[-1] == '/')
-        path = posixpath.normpath(path).replace('//', '/')
-        if has_trailing_slash and path[-1] != '/':
-            path = path + '/'
+            path = b'/'
+        has_trailing_slash = (path[-1:] == b'/')
+        print(path)
+        print(has_trailing_slash)
+        path = posixpath.normpath(path).replace(b'//', b'/')
+        if has_trailing_slash and path[-1:] != b'/':
+            path = path + b'/'
         port = url_parts.port
-        host = host.strip('.')
-        host = re.sub(r'\.+', '.', host).lower()
+        host = host.strip(b'.')
+        host = re.sub(b'\.+', b'.', host).lower()
         if host.isdigit():
             try:
                 host = socket.inet_ntoa(struct.pack("!I", int(host)))
             except:
                 pass
-        if host.startswith('0x') and '.' not in host:
+        elif host.startswith(b'0x') and b'.' not in host:
             try:
                 host = socket.inet_ntoa(struct.pack("!I", int(host, 16)))
             except:
