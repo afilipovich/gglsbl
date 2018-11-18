@@ -1,9 +1,11 @@
 #!/usr/bin/env python
 
+import sys
 from functools import wraps
 
 try:
-    import urllib, urlparse
+    import urllib
+    import urlparse
 except ImportError:
     import urllib.parse as urllib
     from urllib import parse as urlparse
@@ -25,15 +27,19 @@ except ImportError:
     from apiclient.errors import HttpError
 
 import logging
-log = logging.getLogger('gglsbl')
-log.addHandler(logging.NullHandler())
-
 from ._version import get_versions
+
+
 __version__ = get_versions()['version']
 del get_versions
 
+log = logging.getLogger('gglsbl')
+log.addHandler(logging.NullHandler())
+
 
 _fail_count = 0
+
+
 def autoretry(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
@@ -44,12 +50,13 @@ def autoretry(func):
                 _fail_count = 0
                 return r
             except HttpError as e:
-                if not (hasattr(e, 'resp') and 'status' in e.resp \
+                if not (hasattr(e, 'resp') and 'status' in e.resp
                         and e.resp['status'].isdigit and int(e.resp['status']) >= 500):
-                    raise # we do not want to retry auth errors etc.
+                    raise  # we do not want to retry auth errors etc.
                 _fail_count += 1
-                wait_for = min(2**(_fail_count - 1) * 15 * 60 * (1 + random.random()), 24*60*60)
-                log.exception('Call Failed for {} time(s). Retrying in {} seconds: {}'.format(_fail_count, wait_for, str(e)))
+                wait_for = min(2 ** (_fail_count - 1) * 15 * 60 * (1 + random.random()), 24 * 60 * 60)
+                log.exception('Call Failed for %s time(s). Retrying in %s seconds: %s',
+                              _fail_count, wait_for, str(e))
                 time.sleep(wait_for)
             except socket.error:
                 transient_error_wait = 2
@@ -59,7 +66,13 @@ def autoretry(func):
 
 
 class SafeBrowsingApiClient(object):
-    def __init__(self, developer_key, client_id='python-gglsbl', client_version=__version__, discard_fair_use_policy=True):
+    def __init__(self, developer_key, client_id='python-gglsbl',
+                 client_version=__version__, discard_fair_use_policy=True):
+        """Constructor.
+
+        :param developer_key: Google API key
+        :param discard_fair_use_policy: do not wait between individual API calls as requested by the spec
+        """
         self.client_id = client_id
         self.client_version = client_version
         self.discard_fair_use_policy = discard_fair_use_policy
@@ -96,19 +109,19 @@ class SafeBrowsingApiClient(object):
         client_state is a dict which looks like {(threatType, platformType, threatEntryType): clientState}
         """
         request_body = {
-                "client": {
-                "clientId":       self.client_id,
-                "clientVersion":  self.client_version,
+            "client": {
+                "clientId": self.client_id,
+                "clientVersion": self.client_version,
             },
-            "listUpdateRequests": []
+            "listUpdateRequests": [],
         }
         for (threat_type, platform_type, threat_entry_type), current_state in client_state.items():
             request_body['listUpdateRequests'].append(
                 {
-                    "threatType":      threat_type,
-                    "platformType":    platform_type,
+                    "threatType": threat_type,
+                    "platformType": platform_type,
                     "threatEntryType": threat_entry_type,
-                    "state":           current_state,
+                    "state": current_state,
                     "constraints": {
                         "supportedCompressions": ["RAW"]
                     }
@@ -125,17 +138,17 @@ class SafeBrowsingApiClient(object):
         client_state is a dict which looks like {(threatType, platformType, threatEntryType): clientState}
         """
         request_body = {
-          "client": {
-            "clientId":      self.client_id,
-            "clientVersion": self.client_version,
-          },
-          "clientStates": [],
-          "threatInfo": {
-            "threatTypes":      [],
-            "platformTypes":    [],
-            "threatEntryTypes": [],
-            "threatEntries": [],
-          }
+            "client": {
+                "clientId": self.client_id,
+                "clientVersion": self.client_version,
+            },
+            "clientStates": [],
+            "threatInfo": {
+                "threatTypes": [],
+                "platformTypes": [],
+                "threatEntryTypes": [],
+                "threatEntries": [],
+            }
         }
         for prefix in prefixes:
             request_body['threatInfo']['threatEntries'].append({"hash": b64encode(prefix).decode()})
@@ -151,10 +164,24 @@ class SafeBrowsingApiClient(object):
         self.set_wait_duration(response.get('minimumWaitDuration'))
         return response
 
+
 class URL(object):
     """URL representation suitable for lookup"""
+
+    __py3 = (sys.version_info > (3, 0))
+
     def __init__(self, url):
-        self.url = str(url)
+        """Constructor.
+
+        :param url: can be either of str or bytes type.
+        """
+        if self.__py3:
+            if type(url) is bytes:
+                self.url = bytes(url)
+            else:
+                self.url = url.encode()
+        else:
+            self.url = str(url)
 
     @property
     def hashes(self):
@@ -165,60 +192,78 @@ class URL(object):
 
     @property
     def canonical(self):
-        "Convert URL to its canonical form"
+        """Convert URL to its canonical form."""
         def full_unescape(u):
             uu = urllib.unquote(u)
             if uu == u:
                 return uu
             else:
                 return full_unescape(uu)
+
+        def full_unescape_to_bytes(u):
+            uu = urlparse.unquote_to_bytes(u)
+            if uu == u:
+                return uu
+            else:
+                return full_unescape_to_bytes(uu)
+
         def quote(s):
             safe_chars = '!"$&\'()*+,-./:;<=>?@[\\]^_`{|}~'
             return urllib.quote(s, safe=safe_chars)
+
         url = self.url.strip()
-        url = url.replace('\n', '').replace('\r', '').replace('\t', '')
-        url = url.split('#', 1)[0]
-        if url.startswith('//'):
-            url = 'http:' + url
-        if len(url.split('://')) <= 1:
-            url = 'http://' + url
-        url = quote(full_unescape(url))
+        url = url.replace(b'\n', b'').replace(b'\r', b'').replace(b'\t', b'')
+        url = url.split(b'#', 1)[0]
+        if url.startswith(b'//'):
+            url = b'http:' + url
+        if len(url.split(b'://')) <= 1:
+            url = b'http://' + url
+        # at python3 work with bytes instead of string
+        # as URL may contain invalid unicode characters
+        if self.__py3 and type(url) is bytes:
+            url = quote(full_unescape_to_bytes(url))
+        else:
+            url = quote(full_unescape(url))
         url_parts = urlparse.urlsplit(url)
         if not url_parts[0]:
-            url = 'http://%s' % url
+            url = 'http://{}'.format(url)
             url_parts = urlparse.urlsplit(url)
         protocol = url_parts.scheme
-        host = full_unescape(url_parts.hostname)
-        path = full_unescape(url_parts.path)
+        if self.__py3:
+            host = full_unescape_to_bytes(url_parts.hostname)
+            path = full_unescape_to_bytes(url_parts.path)
+        else:
+            host = full_unescape(url_parts.hostname)
+            path = full_unescape(url_parts.path)
         query = url_parts.query
         if not query and '?' not in url:
             query = None
         if not path:
-            path = '/'
-        has_trailing_slash = (path[-1] == '/')
-        path = posixpath.normpath(path).replace('//', '/')
-        if has_trailing_slash and path[-1] != '/':
-            path = path + '/'
+            path = b'/'
+        has_trailing_slash = (path[-1:] == b'/')
+        path = posixpath.normpath(path).replace(b'//', b'/')
+        if has_trailing_slash and path[-1:] != b'/':
+            path = path + b'/'
         port = url_parts.port
-        host = host.strip('.')
-        host = re.sub(r'\.+', '.', host).lower()
+        host = host.strip(b'.')
+        host = re.sub(br'\.+', b'.', host).lower()
         if host.isdigit():
             try:
                 host = socket.inet_ntoa(struct.pack("!I", int(host)))
-            except:
+            except Exception:
                 pass
-        if host.startswith('0x') and '.' not in host:
+        elif host.startswith(b'0x') and b'.' not in host:
             try:
                 host = socket.inet_ntoa(struct.pack("!I", int(host, 16)))
-            except:
+            except Exception:
                 pass
         quoted_path = quote(path)
         quoted_host = quote(host)
         if port is not None:
-            quoted_host = '%s:%s' % (quoted_host, port)
-        canonical_url = '%s://%s%s' % (protocol, quoted_host, quoted_path)
+            quoted_host = '{}:{}'.format(quoted_host, port)
+        canonical_url = '{}://{}{}'.format(protocol, quoted_host, quoted_path)
         if query is not None:
-            canonical_url = '%s?%s' % (canonical_url, query)
+            canonical_url = '{}?{}'.format(canonical_url, query)
         return canonical_url
 
     @staticmethod
@@ -232,23 +277,25 @@ class URL(object):
                 yield host
                 return
             parts = host.split('.')
-            l = min(len(parts),5)
+            l = min(len(parts), 5)
             if l > 4:
                 yield host
-            for i in range(l-1):
-                yield '.'.join(parts[i-l:])
+            for i in range(l - 1):
+                yield '.'.join(parts[i - l:])
+
         def url_path_permutations(path):
             yield path
             query = None
             if '?' in path:
-                path, query =  path.split('?', 1)
+                path, query = path.split('?', 1)
             if query is not None:
                 yield path
             path_parts = path.split('/')[0:-1]
             curr_path = ''
-            for i in range(min(4, len(path_parts) )):
+            for i in range(min(4, len(path_parts))):
                 curr_path = curr_path + path_parts[i] + '/'
                 yield curr_path
+
         protocol, address_str = urllib.splittype(url)
         host, path = urllib.splithost(address_str)
         user, host = urllib.splituser(host)
@@ -257,7 +304,7 @@ class URL(object):
         seen_permutations = set()
         for h in url_host_permutations(host):
             for p in url_path_permutations(path):
-                u = '%s%s' % (h, p)
+                u = '{}{}'.format(h, p)
                 if u not in seen_permutations:
                     yield u
                     seen_permutations.add(u)

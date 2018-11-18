@@ -39,6 +39,8 @@ htmlcov/
 .cache
 nosetests.xml
 coverage.xml
+flake8.txt
+pytest.xml
 
 # Translations
 *.mo
@@ -62,3 +64,4 @@ venv
 
 # ctags
 tags
+
