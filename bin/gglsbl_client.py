@@ -47,6 +47,10 @@ def setupArgsParser():
                         type=int,
                         help=('SQLite connection timeout. Default is 10 seconds. Increase if you get'
                               ' occasional "database is locked" errors'))
+    parser.add_argument('--blacklisted-return-code',
+                        default=0,
+                        type=int,
+                        help='Return this code from process when URL is blacklisted')
     return parser
 
 
@@ -81,6 +85,7 @@ def main():
             print('{} is not blacklisted'.format(args.check_url))
         else:
             print('{} is blacklisted in {}'.format(args.check_url, bl))
+            sys.exit(args.blacklisted_return_code)
         sys.exit(0)
     if args.onetime:
         sbl = SafeBrowsingList(args.api_key, db_path=args.db_path, discard_fair_use_policy=True, timeout=args.timeout)
