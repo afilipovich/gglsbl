@@ -6,7 +6,7 @@ import logging
 
 from gglsbl.utils import to_hex
 from gglsbl.protocol import SafeBrowsingApiClient, URL
-from gglsbl.storage import SqliteStorage, ThreatList, HashPrefixList
+from gglsbl.storage import SqliteStorage, MySQLStorage, ThreatList, HashPrefixList
 
 
 log = logging.getLogger('gglsbl')
@@ -20,7 +20,7 @@ class SafeBrowsingList(object):
     https://developers.google.com/safe-browsing/v4/
     """
 
-    def __init__(self, api_key, db_path='/tmp/gsb_v4.db',
+    def __init__(self, api_key, db_path='/tmp/gsb_v4.db', db_config = None,
                  discard_fair_use_policy=False, platforms=None, timeout=10):
         """Constructor.
 
@@ -32,7 +32,10 @@ class SafeBrowsingList(object):
             timeout: seconds to wait for Sqlite DB to become unlocked from concurrent WRITE transaction.
         """
         self.api_client = SafeBrowsingApiClient(api_key, discard_fair_use_policy=discard_fair_use_policy)
-        self.storage = SqliteStorage(db_path, timeout=timeout)
+        if db_config and db_config.get('backend') == 'mysql':
+            self.storage = MySQLStorage(db_config, timeout=timeout)
+        else:
+            self.storage = SqliteStorage(db_path, timeout=timeout)
         self.platforms = platforms
 
     def _verify_threat_list_checksum(self, threat_list, remote_checksum):
