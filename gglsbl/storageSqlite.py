@@ -6,6 +6,7 @@ import contextlib
 import hashlib
 
 import logging as log
+import gglsbl
 #log = logging.getLogger()
 #log.addHandler(logging.NullHandler())
 
@@ -133,7 +134,7 @@ class SqliteStorage(object):
             dbc.execute(q.format(placeholders), [sqlite3.Binary(hv) for hv in hash_values])
             for h in dbc.fetchall():
                 threat_type, platform_type, threat_entry_type, has_expired = h
-                threat_list = ThreatList(threat_type, platform_type, threat_entry_type)
+                threat_list = gglsbl.storage.ThreatList(threat_type, platform_type, threat_entry_type)
                 output.append((threat_list, has_expired))
         return output
 
@@ -205,7 +206,7 @@ class SqliteStorage(object):
             dbc.execute(q)
             for h in dbc.fetchall():
                 threat_type, platform_type, threat_entry_type = h
-                threat_list = ThreatList(threat_type, platform_type, threat_entry_type)
+                threat_list = gglsbl.storage.ThreatList(threat_type, platform_type, threat_entry_type)
                 output.append(threat_list)
         return output
 

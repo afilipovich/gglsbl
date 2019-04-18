@@ -28,6 +28,18 @@ def setupArgsParser():
     parser.add_argument('--db-path',
                         default='/tmp/gsb_v4.db',
                         help='Path to SQLite DB')
+    parser.add_argument('--mysql-user',
+                        default='',
+                        help='MySQL User')
+    parser.add_argument('--mysql-password',
+                        default='',
+                        help='MySQL Password')
+    parser.add_argument('--mysql-db',
+                        default='',
+                        help='MySQL Databasename')
+    parser.add_argument('--mysql-host',
+                        default='',
+                        help='MySQL Host')
     parser.add_argument('--log',
                         default=None,
                         help='Path to log file, by default log to STDERR')
@@ -78,8 +90,18 @@ def main():
     args_parser = setupArgsParser()
     args = args_parser.parse_args()
     setupLogger(args.log, args.debug)
+    db_config = None
+    if args.mysql_db:
+        db_config = {
+            'user': args.mysql_user,
+            'password': args.mysql_password,
+            'host': args.mysql_host,
+            'database': args.mysql_db,
+            'backend': 'mysql'
+        }
+
     if args.check_url:
-        sbl = SafeBrowsingList(args.api_key, db_path=args.db_path, timeout=args.timeout)
+        sbl = SafeBrowsingList(args.api_key, db_path=args.db_path, timeout=args.timeout, db_config = db_config)
         bl = sbl.lookup_url(args.check_url)
         if bl is None:
             print('{} is not blacklisted'.format(args.check_url))
@@ -88,10 +110,10 @@ def main():
             sys.exit(args.blacklisted_return_code)
         sys.exit(0)
     if args.onetime:
-        sbl = SafeBrowsingList(args.api_key, db_path=args.db_path, discard_fair_use_policy=True, timeout=args.timeout)
+        sbl = SafeBrowsingList(args.api_key, db_path=args.db_path, discard_fair_use_policy=True, timeout=args.timeout, db_config = db_config)
         run_sync(sbl)
     else:
-        sbl = SafeBrowsingList(args.api_key, db_path=args.db_path, timeout=args.timeout)
+        sbl = SafeBrowsingList(args.api_key, db_path=args.db_path, timeout=args.timeout, db_config = db_config)
         while True:
             run_sync(sbl)
 

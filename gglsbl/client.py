@@ -33,7 +33,7 @@ class SafeBrowsingList(object):
         """
         self.api_client = SafeBrowsingApiClient(api_key, discard_fair_use_policy=discard_fair_use_policy)
         if db_config and db_config.get('backend') == 'mysql':
-            self.storage = MySQLStorage(db_config, timeout=timeout)
+            self.storage = MySQLStorage(db_config)
         else:
             self.storage = SqliteStorage(db_path, timeout=timeout)
         self.platforms = platforms
@@ -50,7 +50,8 @@ class SafeBrowsingList(object):
             self._sync_threat_lists()
             self.storage.commit()
             self._sync_hash_prefix_cache()
-        except Exception:
+        except Exception, e:
+            log.error('Failed to update: %s' % (e, ))
             self.storage.rollback()
             raise
 

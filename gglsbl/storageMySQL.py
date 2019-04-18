@@ -1,11 +1,11 @@
 #!/usr/bin/env python
 
 import mysql.connector
-import mysql.errors
 import contextlib
 import hashlib
 
 import logging as log
+import gglsbl
 # log = logging.getLogger()
 # log.addHandler(logging.NullHandler())
 
@@ -17,13 +17,18 @@ class MySQLStorage(object):
 
     def __init__(self, config):
         self.config = config
-        self.db = mysql.connector.connect(user = config['user'], password = config['password'], host = config['host'], database = config['database'], time_zone='+00:00')
+        self.config.setdefault('max_non_commit', 500)
+        self.commit_queue = 0
+        self.connect()
         if not self.check_schema_exists():
             log.info('Table Schema does not exist, initializing')
             self.init_db()
 
         if not self.check_schema_version():
-            raise Exception("Cache schema is not compatible with this library version. Re-creating Table Schema %s", db_path)
+            raise Exception("Cache schema is not compatible with this library version.")
+
+    def connect(self):
+        self.db = mysql.connector.connect(user = self.config['user'], password = self.config['password'], host = self.config['host'], database = self.config['database'], time_zone='+00:00', charset='ascii')
 
     @contextlib.contextmanager
     def get_cursor(self):
@@ -32,6 +37,12 @@ class MySQLStorage(object):
             yield dbc
         finally:
             dbc.close()
+
+    def ping(self):
+        try:
+            self.db.ping(reconnect=True)
+        except Exception, e:
+            log.error(e)
 
     def check_schema_exists(self):
         """ check if tables already exists
@@ -50,81 +61,90 @@ class MySQLStorage(object):
         with self.get_cursor() as dbc:
             try:
                 dbc.execute(q)
-                v = dbc.fetchall()[0][0]
-            except mysql.errors.OperationalError:
+                v = dbc.fetchone()
+                if not v:
+                    return False
+            except mysql.connector.errors.OperationalError:
                 log.error('Can not get schema version, it is probably outdated.')
                 return False
-        self.db.rollback()  # prevent dangling transaction while instance is idle after init
-        return v == self.schema_version
+        self.rollback()  # prevent dangling transaction while instance is idle after init
+        return v[0] == self.schema_version
 
     def init_db(self):
         """initialize database schema
         """
         with self.get_cursor() as dbc:
+            dbc.execute("""SET FOREIGN_KEY_CHECKS=0;""")
             dbc.execute("""
             CREATE TABLE IF NOT EXISTS `full_hash` (
-                `value` tinyblob NOT NULL,
-                `threat_type` varchar(128) COLLATE utf8_bin NOT NULL,
-                `platform_type` varchar(128) COLLATE utf8_bin NOT NULL,
-                `threat_entry_type` varchar(128) COLLATE utf8_bin NOT NULL,
-                `downloaded_at` datetime DEFAULT CURRENT_TIMESTAMP,
-                `expires_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                `malware_threat_type` varchar(32) COLLATE utf8_bin DEFAULT NULL,
+                `value` BINARY(32) NOT NULL,
+                `threat_type` varchar(128) COLLATE ascii_general_ci NOT NULL,
+                `platform_type` varchar(128) COLLATE ascii_general_ci NOT NULL,
+                `threat_entry_type` varchar(128) COLLATE ascii_general_ci NOT NULL,
+                `downloaded_at` datetime,
+                `expires_at` datetime NOT NULL,
+                `malware_threat_type` varchar(32) COLLATE ascii_general_ci DEFAULT NULL,
                 PRIMARY KEY (`value`(32),`threat_type`,`platform_type`,`threat_entry_type`),
                 KEY `idx_full_hash_expires_at` (`expires_at`),
-                KEY `idx_full_hash_value` (`value`(32))
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;
+                KEY `idx_full_hash_value` (`value`)
+            ) ENGINE=InnoDB;
             """)
 
             dbc.execute("""
             CREATE TABLE IF NOT EXISTS `hash_prefix` (
-                `value` tinyblob NOT NULL,
-                `cue` tinyblob NOT NULL,
-                `threat_type` varchar(128) COLLATE utf8_bin NOT NULL,
-                `platform_type` varchar(128) COLLATE utf8_bin NOT NULL,
-                `threat_entry_type` varchar(128) COLLATE utf8_bin NOT NULL,
-                `timestamp` datetime DEFAULT CURRENT_TIMESTAMP,
-                `negative_expires_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (`value`(32),`threat_type`,`platform_type`,`threat_entry_type`),
-                KEY `idx_hash_prefix_cue` (`cue`(4)),
+                `value` BINARY(4) NOT NULL,
+                `cue` BINARY(4) NOT NULL,
+                `threat_type` varchar(128) COLLATE ascii_general_ci NOT NULL,
+                `platform_type` varchar(128) COLLATE ascii_general_ci NOT NULL,
+                `threat_entry_type` varchar(128) COLLATE ascii_general_ci NOT NULL,
+                `timestamp` datetime NOT NULL,
+                `negative_expires_at` datetime NOT NULL,
+                PRIMARY KEY (`value`,`threat_type`,`platform_type`,`threat_entry_type`),
+                KEY `idx_hash_prefix_cue` (`cue`),
                 KEY `idx_hash_prefix_list` (`threat_type`,`platform_type`,`threat_entry_type`),
                 CONSTRAINT `hash_prefix_ibfk_1` FOREIGN KEY (`threat_type`, `platform_type`, `threat_entry_type`) REFERENCES `threat_list` (`threat_type`, `platform_type`, `threat_entry_type`) ON DELETE CASCADE
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;
+            ) ENGINE=InnoDB;
             """)
 
             dbc.execute("""
             CREATE TABLE IF NOT EXISTS `metadata` (
-                `name` varchar(128) COLLATE utf8_bin NOT NULL,
-                `value` varchar(128) COLLATE utf8_bin NOT NULL,
+                `name` varchar(128) COLLATE ascii_general_ci NOT NULL,
+                `value` varchar(128) COLLATE ascii_general_ci NOT NULL,
                 PRIMARY KEY (`name`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;
+            ) ENGINE=InnoDB;
             """)
+
+            dbc.execute(
+                """INSERT IGNORE INTO metadata (name, value) VALUES ('schema_version', %s)""", (self.schema_version, )
+            )
 
             dbc.execute("""
             CREATE TABLE IF NOT EXISTS `threat_list` (
-                `threat_type` varchar(128) COLLATE utf8_bin NOT NULL,
-                `platform_type` varchar(128) COLLATE utf8_bin NOT NULL,
-                `threat_entry_type` varchar(128) COLLATE utf8_bin NOT NULL,
-                `client_state` varchar(42) COLLATE utf8_bin DEFAULT NULL,
-                `timestamp` datetime DEFAULT CURRENT_TIMESTAMP,
+                `threat_type` varchar(128) COLLATE ascii_general_ci NOT NULL,
+                `platform_type` varchar(128) COLLATE ascii_general_ci NOT NULL,
+                `threat_entry_type` varchar(128) COLLATE ascii_general_ci NOT NULL,
+                `client_state` varchar(42) COLLATE ascii_general_ci DEFAULT NULL,
+                `timestamp` datetime NOT NULL,
                 PRIMARY KEY (`threat_type`,`platform_type`,`threat_entry_type`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;
+            ) ENGINE=InnoDB;
             """)
+            dbc.execute("""SET FOREIGN_KEY_CHECKS=1;""")
 
-        self.db.commit()
+        self.commit()
 
     def lookup_full_hashes(self, hash_values):
         """Query DB to see if hash is blacklisted
         """
+        self.ping()
         q = """SELECT threat_type, platform_type, threat_entry_type, expires_at < current_timestamp AS has_expired
                 FROM full_hash WHERE value IN ({})"""
         output = []
         with self.get_cursor() as dbc:
-            placeholders = ','.join(['?'] * len(hash_values))
+            placeholders = ','.join(['%s'] * len(hash_values))
             dbc.execute(q.format(placeholders), hash_values)
             for h in dbc.fetchall():
                 threat_type, platform_type, threat_entry_type, has_expired = h
-                threat_list = ThreatList(threat_type, platform_type, threat_entry_type)
+                threat_list = gglsbl.storage.ThreatList(threat_type, platform_type, threat_entry_type)
                 output.append((threat_list, has_expired))
         return output
 
@@ -133,26 +153,28 @@ class MySQLStorage(object):
 
         Returns a tuple of (value, negative_cache_expired).
         """
+        self.ping()
         q = """SELECT value, MAX(negative_expires_at < current_timestamp) AS negative_cache_expired
                 FROM hash_prefix WHERE cue IN ({}) GROUP BY 1"""
         output = []
         with self.get_cursor() as dbc:
-            dbc.execute(q.format(','.join(['?'] * len(cues))), cues)
+            dbc.execute(q.format(','.join(['%s'] * len(cues))), cues)
             for h in dbc.fetchall():
                 value, negative_cache_expired = h
                 output.append((bytes(value), negative_cache_expired))
         return output
 
     def store_full_hash(self, threat_list, hash_value, cache_duration, malware_threat_type):
+        self.ping()
         """Store full hash found for the given hash prefix"""
         log.info('Storing full hash %s to list %s with cache duration %s',
                  to_hex(hash_value), str(threat_list), cache_duration)
-        qi = """INSERT OR IGNORE INTO full_hash
+        qi = """INSERT IGNORE INTO full_hash
                     (value, threat_type, platform_type, threat_entry_type, malware_threat_type, downloaded_at)
                 VALUES
-                    (?, ?, ?, ?, ?, NOW())"""
-        qu = "UPDATE full_hash SET expires_at = DATE_ADD(NOW(), INTERVAL '{} SECONDS') \
-            WHERE value=? AND threat_type=? AND platform_type=? AND threat_entry_type=?"
+                    (%s, %s, %s, %s, %s, NOW())"""
+        qu = "UPDATE full_hash SET expires_at = DATE_ADD(NOW(), INTERVAL '{} SECOND') \
+            WHERE value=%s AND threat_type=%s AND platform_type=%s AND threat_entry_type=%s"
 
         i_parameters = [hash_value, threat_list.threat_type,
                         threat_list.platform_type, threat_list.threat_entry_type, malware_threat_type]
@@ -162,44 +184,51 @@ class MySQLStorage(object):
         with self.get_cursor() as dbc:
             dbc.execute(qi, i_parameters)
             dbc.execute(qu.format(int(cache_duration)), u_parameters)
+        self.commit_queue += 2
+        if self.commit_queue >= self.config['max_non_commit']:
+            self.commit()
 
     def delete_hash_prefix_list(self, threat_list):
+        self.ping()
         q = """DELETE FROM hash_prefix
-                    WHERE threat_type=? AND platform_type=? AND threat_entry_type=?"""
+                    WHERE threat_type=%s AND platform_type=%s AND threat_entry_type=%s"""
         parameters = [threat_list.threat_type, threat_list.platform_type, threat_list.threat_entry_type]
         with self.get_cursor() as dbc:
             dbc.execute(q, parameters)
 
     def cleanup_full_hashes(self, keep_expired_for=(60 * 60 * 12)):
+        self.ping()
         """Remove long expired full_hash entries."""
-        q = '''DELETE FROM full_hash WHERE expires_at < DATE_SUB(NOW(), INTERVAL {} SECONDS)
-        '''
+        q = 'DELETE FROM full_hash WHERE expires_at < DATE_SUB(NOW(), INTERVAL {} SECOND)'
         log.info('Cleaning up full_hash entries expired more than {} seconds ago.'.format(keep_expired_for))
         with self.get_cursor() as dbc:
             dbc.execute(q.format(int(keep_expired_for)))
 
     def update_hash_prefix_expiration(self, prefix_value, negative_cache_duration):
-        q = """UPDATE hash_prefix SET negative_expires_at = DATE_ADD(NOW(), INTERVAL {} SECONDS)
-            WHERE value=?"""
+        self.ping()
+        q = """UPDATE hash_prefix SET negative_expires_at = DATE_ADD(NOW(), INTERVAL {} SECOND)
+            WHERE value=%s"""
         parameters = [prefix_value, ]
         with self.get_cursor() as dbc:
             dbc.execute(q.format(int(negative_cache_duration)), parameters)
 
     def get_threat_lists(self):
+        self.ping()
         """Get a list of known threat lists."""
-        q = '''SELECT threat_type, platform_type, threat_entry_type FROM threat_list'''
+        q = 'SELECT threat_type, platform_type, threat_entry_type FROM threat_list'
         output = []
         with self.get_cursor() as dbc:
             dbc.execute(q)
             for h in dbc.fetchall():
                 threat_type, platform_type, threat_entry_type = h
-                threat_list = ThreatList(threat_type, platform_type, threat_entry_type)
+                threat_list = gglsbl.storage.ThreatList(threat_type, platform_type, threat_entry_type)
                 output.append(threat_list)
         return output
 
     def get_client_state(self):
+        self.ping()
         """Get a dict of known threat lists including clientState values."""
-        q = '''SELECT threat_type, platform_type, threat_entry_type, client_state FROM threat_list'''
+        q = 'SELECT threat_type, platform_type, threat_entry_type, client_state FROM threat_list'
         output = {}
         with self.get_cursor() as dbc:
             dbc.execute(q)
@@ -210,38 +239,50 @@ class MySQLStorage(object):
         return output
 
     def add_threat_list(self, threat_list):
+        self.ping()
         """Add threat list entry if it does not exist."""
-        q = '''INSERT OR IGNORE INTO threat_list
+        q = '''INSERT IGNORE INTO threat_list
                     (threat_type, platform_type, threat_entry_type, timestamp)
                 VALUES
-                    (?, ?, ?, NOW())
+                    (%s, %s, %s, NOW())
         '''
         params = [threat_list.threat_type, threat_list.platform_type, threat_list.threat_entry_type]
         with self.get_cursor() as dbc:
             dbc.execute(q, params)
 
+        self.commit_queue += 1
+        if self.commit_queue >= self.config['max_non_commit']:
+            self.commit()
+
     def delete_threat_list(self, threat_list):
+        self.ping()
         """Delete threat list entry."""
         log.info('Deleting cached threat list "{}"'.format(repr(threat_list)))
         q = '''DELETE FROM threat_list
-                    WHERE threat_type=? AND platform_type=? AND threat_entry_type=?
+                    WHERE threat_type=%s AND platform_type=%s AND threat_entry_type=%s
         '''
         params = [threat_list.threat_type, threat_list.platform_type, threat_list.threat_entry_type]
         with self.get_cursor() as dbc:
             dbc.execute(q, params)
 
     def update_threat_list_client_state(self, threat_list, client_state):
+        self.ping()
         log.info('Setting client_state in DB')
-        q = '''UPDATE threat_list SET timestamp=NOW(), client_state=?
-            WHERE threat_type=? AND platform_type=? AND threat_entry_type=?'''
+        q = '''UPDATE threat_list SET timestamp=NOW(), client_state=%s
+            WHERE threat_type=%s AND platform_type=%s AND threat_entry_type=%s'''
         with self.get_cursor() as dbc:
             params = [client_state, threat_list.threat_type, threat_list.platform_type, threat_list.threat_entry_type]
             dbc.execute(q, params)
 
+        self.commit_queue += 1
+        if self.commit_queue >= self.config['max_non_commit']:
+            self.commit()
+
     def hash_prefix_list_checksum(self, threat_list):
+        self.ping()
         """Returns SHA256 checksum for alphabetically-sorted concatenated list of hash prefixes"""
         q = '''SELECT value FROM hash_prefix
-                WHERE threat_type=? AND platform_type=? AND threat_entry_type=?
+                WHERE threat_type=%s AND platform_type=%s AND threat_entry_type=%s
                 ORDER BY value
         '''
         params = [threat_list.threat_type, threat_list.platform_type, threat_list.threat_entry_type]
@@ -252,22 +293,28 @@ class MySQLStorage(object):
         return checksum
 
     def populate_hash_prefix_list(self, threat_list, hash_prefix_list):
+        self.ping()
         log.info('Storing {} entries of hash prefix list {}'.format(len(hash_prefix_list), str(threat_list)))
         q = '''INSERT INTO hash_prefix
                     (value, cue, threat_type, platform_type, threat_entry_type, timestamp)
                 VALUES
-                    (?, ?, ?, ?, ?, NOW())
+                    (%s, %s, %s, %s, %s, NOW())
         '''
         with self.get_cursor() as dbc:
             records = [[prefix_value, prefix_value[0:4], threat_list.threat_type,
                         threat_list.platform_type, threat_list.threat_entry_type] for prefix_value in hash_prefix_list]
             dbc.executemany(q, records)
 
+        self.commit_queue += 1
+        if self.commit_queue >= self.config['max_non_commit']:
+            self.commit()
+
     def get_hash_prefix_values_to_remove(self, threat_list, indices):
+        self.ping()
         log.info('Removing {} records from threat list "{}"'.format(len(indices), str(threat_list)))
         indices = set(indices)
         q = '''SELECT value FROM hash_prefix
-                WHERE threat_type=? AND platform_type=? AND threat_entry_type=?
+                WHERE threat_type=%s AND platform_type=%s AND threat_entry_type=%s
                 ORDER BY value
         '''
         params = [threat_list.threat_type, threat_list.platform_type, threat_list.threat_entry_type]
@@ -283,10 +330,11 @@ class MySQLStorage(object):
         return values_to_remove
 
     def remove_hash_prefix_indices(self, threat_list, indices):
+        self.ping()
         """Remove records matching idices from a lexicographically-sorted local threat list."""
         batch_size = 40
         q = '''DELETE FROM hash_prefix
-                WHERE threat_type=? AND platform_type=? AND threat_entry_type=? AND value IN ({})
+                WHERE threat_type=%s AND platform_type=%s AND threat_entry_type=%s AND value IN ({})
         '''
         prefixes_to_remove = self.get_hash_prefix_values_to_remove(threat_list, indices)
         with self.get_cursor() as dbc:
@@ -297,9 +345,10 @@ class MySQLStorage(object):
                     threat_list.platform_type,
                     threat_list.threat_entry_type
                 ] + remove_batch
-                dbc.execute(q.format(','.join(['?'] * len(remove_batch))), params)
+                dbc.execute(q.format(','.join(['%s'] * len(remove_batch))), params)
 
     def dump_hash_prefix_values(self):
+        self.ping()
         """Export all hash prefix values.
 
         Returns a list of known hash prefix values
@@ -313,9 +362,16 @@ class MySQLStorage(object):
 
     def rollback(self):
         log.info('Rolling back DB transaction.')
-        self.db.rollback()
+        try:
+            self.ping()
+            self.db.rollback()
+        except mysql.connector.errors.OperationalError, e:
+            if e.errno == 2055:
+                return self.connect()
+            raise e
 
     def commit(self):
+        self.commit_queue = 0
         self.db.commit()
 
     def total_cleanup(self):
