@@ -17,6 +17,7 @@ class MySQLStorage(object):
 
     def __init__(self, config):
         self.config = config
+        self.db_path = config.get('database')
         self.config.setdefault('max_non_commit', 500)
         self.commit_queue = 0
         self.connect()
@@ -77,7 +78,7 @@ class MySQLStorage(object):
             dbc.execute("""SET FOREIGN_KEY_CHECKS=0;""")
             dbc.execute("""
             CREATE TABLE IF NOT EXISTS `full_hash` (
-                `value` BINARY(32) NOT NULL,
+                `value` VARBINARY(32) NOT NULL,
                 `threat_type` varchar(128) COLLATE ascii_general_ci NOT NULL,
                 `platform_type` varchar(128) COLLATE ascii_general_ci NOT NULL,
                 `threat_entry_type` varchar(128) COLLATE ascii_general_ci NOT NULL,
@@ -92,13 +93,13 @@ class MySQLStorage(object):
 
             dbc.execute("""
             CREATE TABLE IF NOT EXISTS `hash_prefix` (
-                `value` BINARY(4) NOT NULL,
+                `value` VARBINARY(32) NOT NULL,
                 `cue` BINARY(4) NOT NULL,
                 `threat_type` varchar(128) COLLATE ascii_general_ci NOT NULL,
                 `platform_type` varchar(128) COLLATE ascii_general_ci NOT NULL,
                 `threat_entry_type` varchar(128) COLLATE ascii_general_ci NOT NULL,
                 `timestamp` datetime NOT NULL,
-                `negative_expires_at` datetime NOT NULL,
+                `negative_expires_at` datetime,
                 PRIMARY KEY (`value`,`threat_type`,`platform_type`,`threat_entry_type`),
                 KEY `idx_hash_prefix_cue` (`cue`),
                 KEY `idx_hash_prefix_list` (`threat_type`,`platform_type`,`threat_entry_type`),
