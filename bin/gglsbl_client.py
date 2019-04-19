@@ -90,18 +90,20 @@ def main():
     args_parser = setupArgsParser()
     args = args_parser.parse_args()
     setupLogger(args.log, args.debug)
-    db_config = None
+    storage_backend = None
+    storage_config = None
     if args.mysql_db:
-        db_config = {
+        storage_config = {
             'user': args.mysql_user,
             'password': args.mysql_password,
             'host': args.mysql_host,
-            'database': args.mysql_db,
-            'backend': 'mysql'
+            'database': args.mysql_db
         }
+        storage_backend = SafeBrowsingList.STORAGE_BACKEND_MYSQL
 
     if args.check_url:
-        sbl = SafeBrowsingList(args.api_key, db_path=args.db_path, timeout=args.timeout, db_config = db_config)
+        sbl = SafeBrowsingList(args.api_key, db_path=args.db_path, timeout=args.timeout,
+                               storage_backend=storage_backend, storage_config=storage_config)
         bl = sbl.lookup_url(args.check_url)
         if bl is None:
             print('{} is not blacklisted'.format(args.check_url))
@@ -110,11 +112,11 @@ def main():
             sys.exit(args.blacklisted_return_code)
         sys.exit(0)
     if args.onetime:
-        sbl = SafeBrowsingList(args.api_key, db_path=args.db_path, discard_fair_use_policy=True, timeout=args.timeout, db_config = db_config)
+        sbl = SafeBrowsingList(args.api_key, db_path=args.db_path, discard_fair_use_policy=True,
+                               timeout=args.timeout, storage_backend=storage_backend,
+                               storage_config=storage_config)
         run_sync(sbl)
     else:
-        sbl = SafeBrowsingList(args.api_key, db_path=args.db_path, timeout=args.timeout, db_config = db_config)
-        while True:
             run_sync(sbl)
 
 
