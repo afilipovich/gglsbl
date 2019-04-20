@@ -123,9 +123,9 @@ class SqliteStorage(object):
             )
         self.db.commit()
 
-    def lookup_full_hashes(self, hash_values):
+    def lookup_full_hashes(self, hash_values, return_values = None):
         """Query DB to see if hash is blacklisted"""
-        q = '''SELECT threat_type,platform_type,threat_entry_type, expires_at < current_timestamp AS has_expired
+        q = '''SELECT threat_type,platform_type,threat_entry_type, expires_at < current_timestamp AS has_expired, value
                 FROM full_hash WHERE value IN ({})
         '''
         output = []
@@ -133,9 +133,12 @@ class SqliteStorage(object):
             placeholders = ','.join(['?'] * len(hash_values))
             dbc.execute(q.format(placeholders), [sqlite3.Binary(hv) for hv in hash_values])
             for h in dbc.fetchall():
-                threat_type, platform_type, threat_entry_type, has_expired = h
+                threat_type, platform_type, threat_entry_type, has_expired, matched_value = h
                 threat_list = gglsbl.storage.ThreatList(threat_type, platform_type, threat_entry_type)
-                output.append((threat_list, has_expired))
+                if return_values:
+                    output.append((threat_list, has_expired, matched_value))
+                else:
+                    output.append((threat_list, has_expired))
         return output
 
     def lookup_hash_prefix(self, cues):
