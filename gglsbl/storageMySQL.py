@@ -92,7 +92,7 @@ class MySQLStorage(object):
                 `threat_type` varchar(128) COLLATE ascii_general_ci NOT NULL,
                 `platform_type` varchar(128) COLLATE ascii_general_ci NOT NULL,
                 `threat_entry_type` varchar(128) COLLATE ascii_general_ci NOT NULL,
-                `downloaded_at` datetime,
+                `downloaded_at` datetime NOT NULL,
                 `expires_at` datetime NOT NULL,
                 `malware_threat_type` varchar(32) COLLATE ascii_general_ci DEFAULT NULL,
                 PRIMARY KEY (`value`(32),`threat_type`,`platform_type`,`threat_entry_type`),
@@ -109,7 +109,7 @@ class MySQLStorage(object):
                 `platform_type` varchar(128) COLLATE ascii_general_ci NOT NULL,
                 `threat_entry_type` varchar(128) COLLATE ascii_general_ci NOT NULL,
                 `timestamp` datetime NOT NULL,
-                `negative_expires_at` datetime,
+                `negative_expires_at` datetime NOT NULL,
                 PRIMARY KEY (`value`,`threat_type`,`platform_type`,`threat_entry_type`),
                 KEY `idx_hash_prefix_cue` (`cue`),
                 KEY `idx_hash_prefix_list` (`threat_type`,`platform_type`,`threat_entry_type`),
@@ -146,19 +146,22 @@ class MySQLStorage(object):
 
         self.commit()
 
-    def lookup_full_hashes(self, hash_values):
+    def lookup_full_hashes(self, hash_values, return_values = None):
         """Query DB to see if hash is blacklisted
         """
-        q = """SELECT threat_type, platform_type, threat_entry_type, expires_at < current_timestamp AS has_expired
+        q = """SELECT threat_type, platform_type, threat_entry_type, expires_at < NOW() AS has_expired, value
                 FROM full_hash WHERE value IN ({})"""
         output = []
         with self.get_cursor() as dbc:
             placeholders = ','.join(['%s'] * len(hash_values))
-            dbc.execute(q.format(placeholders), hash_values)
+            dbc.execute(q.format(placeholders), list(hash_values))
             for h in dbc.fetchall():
-                threat_type, platform_type, threat_entry_type, has_expired = h
+                threat_type, platform_type, threat_entry_type, has_expired, matched_value = h
                 threat_list = gglsbl.storage.ThreatList(threat_type, platform_type, threat_entry_type)
-                output.append((threat_list, has_expired))
+                if return_values:
+                    output.append((threat_list, has_expired, bytes(matched_value)))
+                else:
+                    output.append((threat_list, has_expired))
         return output
 
     def lookup_hash_prefix(self, cues):
@@ -166,11 +169,11 @@ class MySQLStorage(object):
 
         Returns a tuple of (value, negative_cache_expired).
         """
-        q = """SELECT value, MAX(negative_expires_at < current_timestamp) AS negative_cache_expired
+        q = """SELECT value, MAX(negative_expires_at < NOW()) AS negative_cache_expired
                 FROM hash_prefix WHERE cue IN ({}) GROUP BY 1"""
         output = []
         with self.get_cursor() as dbc:
-            dbc.execute(q.format(','.join(['%s'] * len(cues))), cues)
+            dbc.execute(q.format(','.join(['%s'] * len(cues))), list(cues))
             for h in dbc.fetchall():
                 value, negative_cache_expired = h
                 output.append((bytes(value), negative_cache_expired))
@@ -180,21 +183,17 @@ class MySQLStorage(object):
         """Store full hash found for the given hash prefix"""
         log.info('Storing full hash %s to list %s with cache duration %s',
                  hash_value.encode('hex'), str(threat_list), cache_duration)
-        qi = """INSERT IGNORE INTO full_hash
-                    (value, threat_type, platform_type, threat_entry_type, malware_threat_type, downloaded_at)
+        q = """INSERT INTO full_hash
+                    (value, threat_type, platform_type, threat_entry_type, malware_threat_type, downloaded_at, expires_at)
                 VALUES
-                    (%s, %s, %s, %s, %s, NOW())"""
-        qu = "UPDATE full_hash SET expires_at = DATE_ADD(NOW(), INTERVAL '{} SECOND') \
-            WHERE value=%s AND threat_type=%s AND platform_type=%s AND threat_entry_type=%s"
+                    (%s, %s, %s, %s, %s, NOW(), DATE_ADD(NOW(), INTERVAL {} SECOND))
+                    ON DUPLICATE KEY UPDATE expires_at = DATE_ADD(NOW(), INTERVAL {} SECOND)"""
 
-        i_parameters = [hash_value, threat_list.threat_type,
-                        threat_list.platform_type, threat_list.threat_entry_type, malware_threat_type]
-        u_parameters = [hash_value, threat_list.threat_type,
-                        threat_list.platform_type, threat_list.threat_entry_type]
+        parameters = [bytes(hash_value), threat_list.threat_type,
+                      threat_list.platform_type, threat_list.threat_entry_type, malware_threat_type]
 
         with self.get_cursor() as dbc:
-            dbc.execute(qi, i_parameters)
-            dbc.execute(qu.format(int(cache_duration)), u_parameters)
+            dbc.execute(q.format(int(cache_duration), int(cache_duration)), parameters)
 
     def delete_hash_prefix_list(self, threat_list):
         q = "DELETE FROM hash_prefix WHERE threat_type=%s AND platform_type=%s AND threat_entry_type=%s"
@@ -282,9 +281,9 @@ class MySQLStorage(object):
     def populate_hash_prefix_list(self, threat_list, hash_prefix_list):
         log.info('Storing {} entries of hash prefix list {}'.format(len(hash_prefix_list), str(threat_list)))
         q = '''INSERT INTO hash_prefix
-                    (value, cue, threat_type, platform_type, threat_entry_type, timestamp)
+                    (value, cue, threat_type, platform_type, threat_entry_type, timestamp, negative_expires_at)
                 VALUES
-                    (%s, %s, %s, %s, %s, NOW())
+                    (%s, %s, %s, %s, %s, NOW(), NOW())
         '''
         with self.get_cursor() as dbc:
             records = [[prefix_value, prefix_value[0:4], threat_list.threat_type,
@@ -302,12 +301,10 @@ class MySQLStorage(object):
         values_to_remove = []
         with self.get_cursor() as dbc:
             dbc.execute(q, params)
-            i = 0
-            for h in dbc.fetchall():
-                v = bytes(h[0])
-                if i in indices:
-                    values_to_remove.append(v)
-                i += 1
+            av = dbc.fetchall()
+            for i in indices:
+                v = bytes(av[i][0])
+                values_to_remove.append(v)
         return values_to_remove
 
     def remove_hash_prefix_indices(self, threat_list, indices):
