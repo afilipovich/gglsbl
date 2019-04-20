@@ -117,7 +117,10 @@ def main():
                                storage_config=storage_config)
         run_sync(sbl)
     else:
-            run_sync(sbl)
+        sbl = SafeBrowsingList(args.api_key, db_path=args.db_path,
+                               timeout=args.timeout, storage_backend=storage_backend,
+                               storage_config=storage_config)
+        run_sync(sbl)
 
 
 if __name__ == '__main__':
