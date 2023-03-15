@@ -52,7 +52,6 @@ class SafeBrowsingList(object):
             raise
 
     def _sync_threat_lists(self):
-        self.api_client.fair_use_delay()
         threat_lists_to_remove = dict()
         for ts in self.storage.get_threat_lists():
             threat_lists_to_remove[repr(ts)] = ts
@@ -71,7 +70,6 @@ class SafeBrowsingList(object):
         del threat_lists_to_remove
 
     def _sync_hash_prefix_cache(self):
-        self.api_client.fair_use_delay()
         client_state = self.storage.get_client_state()
         for response in self.api_client.get_threats_update(client_state):
             response_threat_list = ThreatList(response['threatType'], response['platformType'],
@@ -99,7 +97,6 @@ class SafeBrowsingList(object):
         Also update cache expiration timestamps.
         """
         client_state = self.storage.get_client_state()
-        self.api_client.fair_use_delay()
         fh_response = self.api_client.get_full_hashes(hash_prefixes, client_state)
 
         # update negative cache for each hash prefix

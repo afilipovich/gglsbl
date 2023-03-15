@@ -79,19 +79,21 @@ class SafeBrowsingApiClient(object):
         if self.discard_fair_use_policy:
             log.warn('Circumventing request frequency throttling is against Safe Browsing API policy.')
         self.service = build('safebrowsing', 'v4', developerKey=developer_key, cache_discovery=False)
-        self.next_request_no_sooner_than = None
+        self.next_threats_update_req_no_sooner_than = None
+        self.next_full_hashes_req_no_sooner_than = None
 
-    def set_wait_duration(self, minimum_wait_duration):
+    def get_wait_duration(self, response):
         if self.discard_fair_use_policy:
-            return
+            return None
+        minimum_wait_duration = response.get('minimumWaitDuration')
         if minimum_wait_duration is None:
-            self.next_request_no_sooner_than = None
-            return
-        self.next_request_no_sooner_than = time.time() + float(minimum_wait_duration.rstrip('s'))
+            return None
+        return time.time() + float(minimum_wait_duration.rstrip('s'))
 
-    def fair_use_delay(self):
-        if self.next_request_no_sooner_than is not None:
-            sleep_for = max(0, self.next_request_no_sooner_than - time.time())
+    @staticmethod
+    def fair_use_delay(next_request_no_sooner_than):
+        if next_request_no_sooner_than is not None:
+            sleep_for = max(0, next_request_no_sooner_than - time.time())
             log.info('Sleeping for {} seconds until next request.'.format(sleep_for))
             time.sleep(sleep_for)
 
@@ -99,10 +101,8 @@ class SafeBrowsingApiClient(object):
     def get_threats_lists(self):
         """Retrieve all available threat lists"""
         response = self.service.threatLists().list().execute()
-        self.set_wait_duration(response.get('minimumWaitDuration'))
         return response['threatLists']
 
-    @autoretry
     def get_threats_update(self, client_state):
         """Fetch hash prefixes update for given threat list.
 
@@ -127,11 +127,17 @@ class SafeBrowsingApiClient(object):
                     }
                 }
             )
-        response = self.service.threatListUpdates().fetch(body=request_body).execute()
-        self.set_wait_duration(response.get('minimumWaitDuration'))
-        return response['listUpdateResponses']
+        self.fair_use_delay(self.next_threats_update_req_no_sooner_than)
 
-    @autoretry
+        @autoretry
+        def _get_threats_update():
+            nonlocal self, request_body
+            res = self.service.threatListUpdates().fetch(body=request_body).execute()
+            self.next_threats_update_req_no_sooner_than = self.get_wait_duration(res)
+            return res['listUpdateResponses']
+
+        return _get_threats_update()
+
     def get_full_hashes(self, prefixes, client_state):
         """Find full hashes matching hash prefixes.
 
@@ -160,9 +166,16 @@ class SafeBrowsingApiClient(object):
                 request_body['threatInfo']['platformTypes'].append(platformType)
             if threatEntryType not in request_body['threatInfo']['threatEntryTypes']:
                 request_body['threatInfo']['threatEntryTypes'].append(threatEntryType)
-        response = self.service.fullHashes().find(body=request_body).execute()
-        self.set_wait_duration(response.get('minimumWaitDuration'))
-        return response
+        self.fair_use_delay(self.next_full_hashes_req_no_sooner_than)
+
+        @autoretry
+        def _get_full_hashes():
+            nonlocal self, request_body
+            res = self.service.fullHashes().find(body=request_body).execute()
+            self.next_full_hashes_req_no_sooner_than = self.get_wait_duration(res)
+            return res
+
+        return _get_full_hashes()
 
 
 class URL(object):
