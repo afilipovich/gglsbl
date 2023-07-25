@@ -26,7 +26,7 @@ class SafeBrowsingListTestCase(unittest.TestCase):
             "//google.com:443/abc": "http://google.com:443/abc",
             "ftp://google.com:443/abc": "ftp://google.com:443/abc",
             "http://www.google.com.../": "http://www.google.com/",
-            "http://www.google.com/foo\tbar\rbaz\n2":"http://www.google.com/foobarbaz2",
+            "http://www.google.com/foo\tbar\rbaz\n2": "http://www.google.com/foobarbaz2",
             "http://www.google.com/q?": "http://www.google.com/q?",
             "http://www.google.com/q?r?": "http://www.google.com/q?r?",
             "http://www.google.com/q?r?s": "http://www.google.com/q?r?s",
@@ -110,7 +110,6 @@ class SafeBrowsingListTestCase(unittest.TestCase):
             self.assertEqual(URL(nu).canonical, cu)
 
     def test_permutations(self):
-        for k,v in self.url_permutations.items():
+        for k, v in self.url_permutations.items():
             p = list(URL.url_permutations(k))
             self.assertEqual(p, v)
-
