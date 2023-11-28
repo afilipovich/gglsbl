@@ -6,7 +6,7 @@ import logging
 
 from gglsbl.utils import to_hex
 from gglsbl.protocol import SafeBrowsingApiClient, URL
-from gglsbl.storage import SqliteStorage, ThreatList, HashPrefixList
+from gglsbl.storage import SqliteStorage, MySQLStorage, ThreatList, HashPrefixList
 
 
 log = logging.getLogger('gglsbl')
@@ -20,8 +20,12 @@ class SafeBrowsingList(object):
     https://developers.google.com/safe-browsing/v4/
     """
 
-    def __init__(self, api_key, db_path='/tmp/gsb_v4.db',
-                 discard_fair_use_policy=False, platforms=None, timeout=10):
+    STORAGE_BACKEND_SQLITE = "sqlite"
+    STORAGE_BACKEND_MYSQL = "mysql"
+
+    def __init__(self, api_key, db_path='/tmp/gsb_v4.db', storage_config=None,
+                 storage_backend=None, discard_fair_use_policy=False,
+                 platforms=None, timeout=10):
         """Constructor.
 
         Args:
@@ -31,8 +35,14 @@ class SafeBrowsingList(object):
             platforms: list, threat lists to look up, default includes all platforms.
             timeout: seconds to wait for Sqlite DB to become unlocked from concurrent WRITE transaction.
         """
+        if storage_backend is None:
+            storage_backend = self.STORAGE_BACKEND_SQLITE
+
         self.api_client = SafeBrowsingApiClient(api_key, discard_fair_use_policy=discard_fair_use_policy)
-        self.storage = SqliteStorage(db_path, timeout=timeout)
+        if storage_backend == self.STORAGE_BACKEND_MYSQL:
+            self.storage = MySQLStorage(storage_config)
+        elif storage_backend == self.STORAGE_BACKEND_SQLITE:
+            self.storage = SqliteStorage(db_path, timeout=timeout)
         self.platforms = platforms
 
     def _verify_threat_list_checksum(self, threat_list, remote_checksum):
@@ -47,7 +57,8 @@ class SafeBrowsingList(object):
             self._sync_threat_lists()
             self.storage.commit()
             self._sync_hash_prefix_cache()
-        except Exception:
+        except Exception, e:
+            log.error('Failed to update: %s' % (e, ))
             self.storage.rollback()
             raise
 
@@ -133,6 +144,86 @@ class SafeBrowsingList(object):
         if list_names:
             return list_names
         return None
+
+    def lookup_urls(self, urls):
+        "Look up list of URLs in Safe Browsing thread lists."
+        url_hashes = {}
+        for url in urls:
+            for url_hash in URL(url).hashes:
+                if not url_hash in url_hashes:
+                    url_hashes[url_hash] = url
+
+        if not url_hashes:
+            return
+
+        try:
+            list_names = self._lookup_map_hashes(url_hashes)
+            self.storage.commit()
+        except Exception:
+            self.storage.rollback()
+            raise
+
+        if list_names:
+            return list_names
+        return None
+
+    def _lookup_map_hashes(self, full_hashes):
+        """Lookup URL hash in blacklists
+
+        Returns names of lists it was found in.
+        """
+        full_hashes_list = full_hashes.keys()
+        if len(full_hashes_list) > 100:
+            raise Exception("Exceeded maximum request limit")
+
+        cues = [fh[0:4] for fh in full_hashes_list]
+        result = {}
+        matching_prefixes = {}
+        matching_full_hashes = set()
+        is_potential_threat = False
+        # First lookup hash prefixes which match full URL hash
+        for (hash_prefix, negative_cache_expired) in self.storage.lookup_hash_prefix(cues):
+            for full_hash in full_hashes_list:
+                if full_hash.startswith(hash_prefix):
+                    is_potential_threat = True
+                    # consider hash prefix negative cache as expired if it is expired in at least one threat list
+                    matching_prefixes[hash_prefix] = matching_prefixes.get(hash_prefix, False) or negative_cache_expired
+                    matching_full_hashes.add(full_hash)
+        # if none matches, URL hash is clear
+        if not is_potential_threat:
+            return {}
+        # if there is non-expired full hash, URL is blacklisted
+        matching_expired_threat_lists = {}
+        for threat_list, has_expired, matched_value in self.storage.lookup_full_hashes(matching_full_hashes, True):
+            if has_expired:
+                matching_expired_threat_lists[matched_value] = threat_list
+            else:
+                u = full_hashes[matched_value]
+                if u not in result:
+                    result[u] = []
+                result[u].append(threat_list)
+
+        if result:
+            return result
+
+        # If there are no matching expired full hash entries
+        # and negative cache is still current for all prefixes, consider it safe
+        if len(matching_expired_threat_lists.keys()) == 0 and sum(map(int, matching_prefixes.values())) == 0:
+            log.info('Negative cache hit.')
+            return {}
+
+        # Now we can assume that there are expired matching full hash entries and/or
+        # cache prefix entries with expired negative cache. Both require full hash sync.
+        self._sync_full_hashes(matching_prefixes.keys())
+
+        # Now repeat full hash lookup
+        for threat_list, has_expired, matched_value in self.storage.lookup_full_hashes(matching_full_hashes, True):
+            if not has_expired:
+                u = full_hashes[matched_value]
+                if u not in result:
+                    result[u] = []
+                result[u].append(threat_list)
+        return result
 
     def _lookup_hashes(self, full_hashes):
         """Lookup URL hash in blacklists
